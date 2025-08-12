@@ -110,6 +110,7 @@ export default function AuthInner() {
       </section>
 
       {/* 方式B：Safariでログイン→自動同期 */}
+      {/*
       <section className="space-y-2 border-t pt-4">
         <button
           type="button"
@@ -122,6 +123,7 @@ export default function AuthInner() {
           新しいウィンドウでログインが完了すると、この画面に自動で戻ります。
         </p>
       </section>
+      */}
 
       {/* 既存の「貼り付けログイン」を併存させたい場合は、この下に残してOK */}
     </main>
