@@ -22,7 +22,7 @@ export default function AuthInner() {
     const w = 420, h = 640;
     const left = window.screenX + (window.outerWidth - w) / 2;
     const top = window.screenY + (window.outerHeight - h) / 2;
-    const url = `${BASE_URL}/auth/confirm?from=pwa=1`;
+    const url = `/auth/confirm?from=pwa=1`; // ← 相対URLに変更
     window.open(url, 'confirm', `width=${w},height=${h},left=${left},top=${top}`);
   };
 
