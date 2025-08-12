@@ -1,103 +1,155 @@
-import Image from "next/image";
+// src/app/page.tsx
+'use client';
 
-export default function Home() {
+import { useEffect, useState } from 'react';
+import Image from 'next/image';
+import Link from 'next/link';
+import { supabase } from '@/lib/supabaseClient';
+
+type Visit = {
+  id: string;
+  aquarium_id: string | null;
+  visited_on: string;
+  rating: number | null;
+  note: string | null;
+  aquariums: { name: string } | null;
+};
+type Photo = { visit_id: string; url: string };
+
+export default function HomePage() {
+  const [recent, setRecent] = useState<Visit[]>([]);
+  const [thumbs, setThumbs] = useState<Record<string, string | undefined>>({});
+  const [loading, setLoading] = useState(true);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        setErrMsg(null);
+
+        // 最近の訪問 5件
+        const { data, error } = await supabase
+          .from('visits')
+          .select('id, aquarium_id, visited_on, rating, note, aquariums(name)')
+          .order('visited_on', { ascending: false })
+          .limit(5);
+
+        if (error) {
+          setErrMsg(error.message);
+          return;
+        }
+
+        // 型正規化：aquariums が配列で返る場合に先頭要素を採用
+        type RawVisit = {
+          id: string;
+          aquarium_id: string | null;
+          visited_on: string;
+          rating: number | null;
+          note: string | null;
+          aquariums: { name: string } | { name: string }[] | null;
+        };
+        const raw = (data ?? []) as RawVisit[];
+        const rows: Visit[] = raw.map(v => ({
+          id: v.id,
+          aquarium_id: v.aquarium_id,
+          visited_on: v.visited_on,
+          rating: v.rating,
+          note: v.note,
+          aquariums: Array.isArray(v.aquariums) ? (v.aquariums[0] ?? null) : (v.aquariums ?? null),
+        }));
+        setRecent(rows);
+
+        // サムネ取得
+        const ids = rows.map(v => v.id);
+        if (ids.length > 0) {
+          const { data: ph, error: phErr } = await supabase
+            .from('photos')
+            .select('visit_id,url')
+            .in('visit_id', ids);
+          if (!phErr && ph) {
+            const firstByVisit: Record<string, string> = {};
+            (ph as Photo[]).forEach(p => {
+              if (!firstByVisit[p.visit_id]) firstByVisit[p.visit_id] = p.url;
+            });
+            setThumbs(firstByVisit);
+          }
+        }
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <main className="max-w-5xl mx-auto p-6 space-y-6">
+      <header className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">SuizokuLog（すいぞくログ）</h1>
+        <nav className="text-sm flex gap-4">
+          <Link className="underline" href="/aquariums">水族館一覧</Link>
+          <Link className="underline" href="/aquariums/map">地図</Link>
+          <Link className="underline" href="/history">記録</Link>
+        </nav>
+      </header>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+      {/* 近くの水族館への導線（すでに実装済みなら残す/調整） */}
+      <section className="p-4 rounded-xl border">
+        <h2 className="text-lg font-semibold mb-2">近くの水族館を探す</h2>
+        <p className="text-sm text-gray-600 mb-3">位置情報を許可すると現在地から近い順に表示できます。</p>
+        <Link href="/aquariums/map" className="inline-block px-4 py-2 rounded bg-blue-600 text-white text-sm">
+          地図を開く
+        </Link>
+      </section>
+
+      {/* 最近の訪問 */}
+      <section>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-semibold">最近の訪問</h2>
+          <Link className="text-sm underline" href="/history">すべて見る</Link>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+
+        {loading && <p className="text-gray-600 text-sm">読み込み中…</p>}
+        {errMsg && <p className="text-red-600 text-sm">読み込みエラー：{errMsg}</p>}
+        {!loading && !errMsg && recent.length === 0 && (
+          <p className="text-gray-600 text-sm">まだ記録がありません。まずは1件記録してみましょう。</p>
+        )}
+
+        <ul className="grid sm:grid-cols-2 gap-3">
+          {recent.map(v => {
+            const thumb = thumbs[v.id];
+            return (
+              <li key={v.id} className="border rounded p-3 flex gap-3">
+                {thumb && (
+                  <Image
+                    src={thumb}
+                    alt=""
+                    width={96}
+                    height={96}
+                    className="rounded object-cover"
+                    style={{ width: 96, height: 96 }}
+                  />
+                )}
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">{v.aquariums?.name ?? '（不明）'}</span>
+                    <span className="text-sm text-gray-600">{v.visited_on}</span>
+                  </div>
+                  <div className="text-sm text-gray-600">★{v.rating ?? '-'}</div>
+                  <div className="mt-2 flex gap-3">
+                    {v.aquarium_id && (
+                      <Link className="underline text-sm" href={`/visits/new?aquarium=${v.aquarium_id}`}>
+                        同じ水族館で記録する
+                      </Link>
+                    )}
+                    <Link className="underline text-sm" href={`/visits/${v.id}/edit`}>編集</Link>
+                  </div>
+                  {v.note && <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap">{v.note}</p>}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+    </main>
   );
 }

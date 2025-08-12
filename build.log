@@ -1,0 +1,80 @@
+
+> aquarium-log@0.1.0 build
+> next build
+
+   ▲ Next.js 15.4.6
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+> [PWA] Compile server
+> [PWA] Compile server
+> [PWA] Compile client (static)
+> [PWA] Auto register service worker with: /Users/wakaba/aquarium-log/node_modules/next-pwa/register.js
+> [PWA] Service worker: /Users/wakaba/aquarium-log/public/sw.js
+> [PWA]   url: /sw.js
+> [PWA]   scope: /
+> [PWA] Fallback to precache routes when fetch failed from cache or network:
+> [PWA]   document (page): /offline
+ ⚠ Compiled with warnings in 5.0s
+
+./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+Critical dependency: require function is used in a way in which dependencies cannot be statically extracted
+
+Import trace for requested module:
+./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+./node_modules/libheif-js/wasm-bundle.js
+./node_modules/heic-decode/index.js
+./src/lib/uploadVisitPhoto.ts
+./src/app/visits/new/page.tsx
+
+./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+Critical dependency: require function is used in a way in which dependencies cannot be statically extracted
+
+Import trace for requested module:
+./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+./node_modules/libheif-js/wasm-bundle.js
+./node_modules/heic-decode/index.js
+./src/lib/uploadVisitPhoto.ts
+./src/app/visits/new/page.tsx
+
+   Linting and checking validity of types ...
+
+./src/app/auth/confirm/page.tsx
+20:15  Warning: 'type' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/components/AquariumMap.tsx
+57:10  Warning: 'geoError' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules
+   Collecting page data ...
+   Generating static pages (0/12) ...
+ ⚠ Unsupported metadata themeColor is configured in metadata export in /aquariums. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ ⚠ Unsupported metadata viewport is configured in metadata export in /aquariums. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ ⚠ Unsupported metadata themeColor is configured in metadata export in /aquariums/map. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ ⚠ Unsupported metadata viewport is configured in metadata export in /aquariums/map. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ ⚠ Unsupported metadata themeColor is configured in metadata export in /. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ ⚠ Unsupported metadata viewport is configured in metadata export in /. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ ⚠ Unsupported metadata themeColor is configured in metadata export in /visits/new. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ ⚠ Unsupported metadata viewport is configured in metadata export in /visits/new. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ ⨯ useSearchParams() should be wrapped in a suspense boundary at page "/visits/new". Read more: https://nextjs.org/docs/messages/missing-suspense-with-csr-bailout
+    at g (/Users/wakaba/aquarium-log/.next/server/chunks/24.js:3:13857)
+    at l (/Users/wakaba/aquarium-log/.next/server/chunks/24.js:7:55257)
+    at k (/Users/wakaba/aquarium-log/.next/server/app/visits/new/page.js:2:9705)
+    at n4 (/Users/wakaba/aquarium-log/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:2:81697)
+    at n8 (/Users/wakaba/aquarium-log/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:2:83467)
+    at n9 (/Users/wakaba/aquarium-log/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:2:103676)
+    at n5 (/Users/wakaba/aquarium-log/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:2:101094)
+    at n3 (/Users/wakaba/aquarium-log/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:2:82049)
+    at n8 (/Users/wakaba/aquarium-log/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:2:83513)
+    at n8 (/Users/wakaba/aquarium-log/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:2:100435)
+Error occurred prerendering page "/visits/new". Read more: https://nextjs.org/docs/messages/prerender-error
+Export encountered an error on /visits/new/page: /visits/new, exiting the build.
+ ⨯ Next.js build worker exited with code: 1 and signal: null
