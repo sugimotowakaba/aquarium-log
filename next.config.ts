@@ -3,23 +3,22 @@ import type { NextConfig } from 'next';
 import withPWAInit from 'next-pwa';
 
 const withPWA = withPWAInit({
-  dest: 'public',
-  disable: process.env.NODE_ENV === 'development',
+  dest: 'public',                  // 生成物を public/ に出力
   register: true,
   skipWaiting: true,
-  fallbacks: {
-    document: '/offline',
-  },
 });
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // 画像の外部ドメインを使う場合はここで許可
-  // images: {
-  //   remotePatterns: [
-  //     { protocol: 'https', hostname: 'YOUR-STORAGE.example.com' },
-  //   ],
-  // },
+  // 画像最適化のためのリモートホスト許可
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'rzadenafnpmfymaxrcnf.supabase.co',
+      },
+    ],
+  },
 };
 
 export default withPWA(nextConfig);
