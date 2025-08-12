@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 
 const BASE_URL =
@@ -14,10 +14,41 @@ export default function AuthInner() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  // 貼り付けログイン用
-  const [pastedUrl, setPastedUrl] = useState('');
-  const [pasting, setPasting] = useState(false);
-  const [pasteErr, setPasteErr] = useState<string | null>(null);
+  // 既存の「貼り付けログイン」を残したい場合は、この辺りに state/handler を残してOK
+
+  // ---- 方式B: Safari(新ウィンドウ)でログイン→PWAへ自動同期 ----
+  const openConfirmPopup = () => {
+    // ユーザー操作発火内で window.open しないとブロックされやすいので注意
+    const w = 420, h = 640;
+    const left = window.screenX + (window.outerWidth - w) / 2;
+    const top = window.screenY + (window.outerHeight - h) / 2;
+    const url = `${BASE_URL}/auth/confirm?from=pwa=1`;
+    window.open(url, 'confirm', `width=${w},height=${h},left=${left},top=${top}`);
+  };
+
+  // Safari 側から postMessage を受けたら同期完了として遷移
+  useEffect(() => {
+    const onMsg = async (ev: MessageEvent) => {
+      // オリジンチェック（同一オリジンのみ受け付け）
+      if (ev.origin !== BASE_URL) return;
+      if (!ev?.data || ev.data.type !== 'SUPABASE_SESSION') return;
+
+      try {
+        // 念のためセッションを取得して確認（即時反映されているはずだが保険）
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          setMsg('ログインしました。履歴へ移動します。');
+          setTimeout(() => (window.location.href = '/history'), 300);
+        } else {
+          setMsg('ログインは完了しました。画面を更新してください。');
+        }
+      } catch {
+        // 失敗しても致命ではないので静かに無視
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
 
   const onRequestMagicLink = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,9 +63,7 @@ export default function AuthInner() {
         },
       });
       if (error) throw error;
-      setMsg(
-        'メールを送信しました。最新のメールを開いてください。iPhoneのホーム画面アプリで使う場合は、リンクを長押し→コピーし、下の「貼り付けログイン」を使うとSafariに移動せず完了できます。'
-      );
+      setMsg('メールを送信しました。Safariでリンクを開いても、この画面の「Safariでログインして戻る」を押せば自動で同期されます。');
     } catch (e) {
       const m = e instanceof Error ? e.message : '送信に失敗しました';
       setErr(m);
@@ -43,78 +72,12 @@ export default function AuthInner() {
     }
   };
 
-  // URLからクエリ/ハッシュを安全に読むユーティリティ
-  const parseURLParams = (raw: string) => {
-    try {
-      const u = new URL(raw);
-      // クエリ
-      const q = u.searchParams;
-      // ハッシュ（#code=... 形式にも対応）
-      const hash = u.hash?.startsWith('#') ? u.hash.slice(1) : u.hash;
-      const h = new URLSearchParams(hash || '');
-      return { q, h };
-    } catch {
-      return { q: new URLSearchParams(), h: new URLSearchParams() };
-    }
-  };
-
-  const onPasteLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPasting(true);
-    setPasteErr(null);
-    setMsg(null);
-    try {
-      const url = pastedUrl.trim();
-      if (!/^https?:\/\//i.test(url)) {
-        throw new Error('メール本文のリンクURLをそのまま貼り付けてください。');
-      }
-
-      // 1) code=... があるなら新形式 → exchangeCodeForSession
-      const { q, h } = parseURLParams(url);
-      const code = q.get('code') || h.get('code');
-      if (code) {
-        const { error } = await supabase.auth.exchangeCodeForSession(url);
-        if (error) throw error;
-        setMsg('ログインしました。履歴へ移動します。');
-        setTimeout(() => (window.location.href = '/history'), 400);
-        return;
-      }
-
-      // 2) token=... & type=magiclink があるなら旧形式 → verifyOtp (magiclink)
-      const token = q.get('token') || h.get('token');
-      const type = (q.get('type') || h.get('type') || '').toLowerCase();
-      if (token && type === 'magiclink') {
-        const { data, error } = await supabase.auth.verifyOtp({
-          type: 'magiclink',
-          token_hash: token,
-        });
-        if (error) throw error;
-        if (!data?.session) {
-          // 一部環境ではここで即 session が無い場合でも、その後 getSession で取得できることがある
-          const { data: s } = await supabase.auth.getSession();
-          if (!s.session) throw new Error('セッションの確立に失敗しました。最新のメールで再度お試しください。');
-        }
-        setMsg('ログインしました。履歴へ移動します。');
-        setTimeout(() => (window.location.href = '/history'), 400);
-        return;
-      }
-
-      // 3) どちらの形式でもない場合はメッセージ
-      throw new Error('このリンク形式には対応していません。最新のメールからリンクをコピーしてお試しください。');
-    } catch (e) {
-      const m = e instanceof Error ? e.message : '貼り付けログインに失敗しました';
-      setPasteErr(m);
-    } finally {
-      setPasting(false);
-    }
-  };
-
   return (
     <main className="max-w-md mx-auto p-6 space-y-6">
       <header>
         <h1 className="text-xl font-semibold">サインイン</h1>
         <p className="text-sm text-gray-600 mt-1">
-          メールアドレスにMagic Linkを送ります。ホーム画面アプリで使う方は「貼り付けログイン」も便利です。
+          メールアドレスにMagic Linkを送ります。iPhoneでホーム画面のアプリを使う場合は、下の「Safariでログインして戻る（自動同期）」が便利です。
         </p>
       </header>
 
@@ -146,30 +109,21 @@ export default function AuthInner() {
         {err && <p className="text-red-600 text-sm">{err}</p>}
       </section>
 
-      {/* 貼り付けログイン（PWA向け） */}
+      {/* 方式B：Safariでログイン→自動同期 */}
       <section className="space-y-2 border-t pt-4">
-        <p className="text-sm text-gray-700">
-          iPhoneのホーム画面から使う場合は、受信メールでリンクを<b>長押し→コピー</b>して、ここに<b>貼り付け</b>てください。
+        <button
+          type="button"
+          onClick={openConfirmPopup}
+          className="w-full rounded border px-4 py-2 text-sm"
+        >
+          Safariでログインして戻る（自動同期）
+        </button>
+        <p className="text-xs text-gray-500">
+          新しいウィンドウでログインが完了すると、この画面に自動で戻ります。
         </p>
-        <form onSubmit={onPasteLogin} className="space-y-2">
-          <input
-            type="url"
-            inputMode="url"
-            value={pastedUrl}
-            onChange={(e) => setPastedUrl(e.target.value)}
-            placeholder="メールのリンクURLをここに貼り付け"
-            className="w-full rounded border px-3 py-2 text-sm"
-          />
-          <button
-            type="submit"
-            disabled={pasting || pastedUrl.trim().length < 10}
-            className="w-full rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-60"
-          >
-            {pasting ? '確認中…' : '貼り付けログイン'}
-          </button>
-          {pasteErr && <p className="text-sm text-red-600">{pasteErr}</p>}
-        </form>
       </section>
+
+      {/* 既存の「貼り付けログイン」を併存させたい場合は、この下に残してOK */}
     </main>
   );
 }
