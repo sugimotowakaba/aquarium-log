@@ -1,4 +1,3 @@
-// src/app/auth/_AuthInner.tsx
 'use client';
 
 import { useState } from 'react';
@@ -33,12 +32,29 @@ export default function AuthInner() {
         },
       });
       if (error) throw error;
-      setMsg('メールを送信しました。最新のメールを開いてください。iPhoneのホーム画面アプリで使う場合は、リンクを長押し→コピーし、下の「貼り付けログイン」を使うとSafariに移動せず完了できます。');
+      setMsg(
+        'メールを送信しました。最新のメールを開いてください。iPhoneのホーム画面アプリで使う場合は、リンクを長押し→コピーし、下の「貼り付けログイン」を使うとSafariに移動せず完了できます。'
+      );
     } catch (e) {
       const m = e instanceof Error ? e.message : '送信に失敗しました';
       setErr(m);
     } finally {
       setSending(false);
+    }
+  };
+
+  // URLからクエリ/ハッシュを安全に読むユーティリティ
+  const parseURLParams = (raw: string) => {
+    try {
+      const u = new URL(raw);
+      // クエリ
+      const q = u.searchParams;
+      // ハッシュ（#code=... 形式にも対応）
+      const hash = u.hash?.startsWith('#') ? u.hash.slice(1) : u.hash;
+      const h = new URLSearchParams(hash || '');
+      return { q, h };
+    } catch {
+      return { q: new URLSearchParams(), h: new URLSearchParams() };
     }
   };
 
@@ -52,10 +68,39 @@ export default function AuthInner() {
       if (!/^https?:\/\//i.test(url)) {
         throw new Error('メール本文のリンクURLをそのまま貼り付けてください。');
       }
-      const { error } = await supabase.auth.exchangeCodeForSession(url);
-      if (error) throw error;
-      setMsg('ログインしました。履歴へ移動します。');
-      setTimeout(() => (window.location.href = '/history'), 400);
+
+      // 1) code=... があるなら新形式 → exchangeCodeForSession
+      const { q, h } = parseURLParams(url);
+      const code = q.get('code') || h.get('code');
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(url);
+        if (error) throw error;
+        setMsg('ログインしました。履歴へ移動します。');
+        setTimeout(() => (window.location.href = '/history'), 400);
+        return;
+      }
+
+      // 2) token=... & type=magiclink があるなら旧形式 → verifyOtp (magiclink)
+      const token = q.get('token') || h.get('token');
+      const type = (q.get('type') || h.get('type') || '').toLowerCase();
+      if (token && type === 'magiclink') {
+        const { data, error } = await supabase.auth.verifyOtp({
+          type: 'magiclink',
+          token_hash: token,
+        });
+        if (error) throw error;
+        if (!data?.session) {
+          // 一部環境ではここで即 session が無い場合でも、その後 getSession で取得できることがある
+          const { data: s } = await supabase.auth.getSession();
+          if (!s.session) throw new Error('セッションの確立に失敗しました。最新のメールで再度お試しください。');
+        }
+        setMsg('ログインしました。履歴へ移動します。');
+        setTimeout(() => (window.location.href = '/history'), 400);
+        return;
+      }
+
+      // 3) どちらの形式でもない場合はメッセージ
+      throw new Error('このリンク形式には対応していません。最新のメールからリンクをコピーしてお試しください。');
     } catch (e) {
       const m = e instanceof Error ? e.message : '貼り付けログインに失敗しました';
       setPasteErr(m);
