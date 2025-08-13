@@ -6,13 +6,13 @@ import heic2any from 'heic2any';
 
 export type UploadResult = { url: string; path: string; width?: number; height?: number };
 
-// ---- 型付け（any撤廃の要）----
-type HeicDecodeResult = { width: number; height: number; data: Uint8ClampedArray };
+// ---- 型付け（heic ライブラリの any 撤廃）----
+type HeicDecodeResult = { width: number; height: number; data: Uint8ClampedArray | ArrayBufferLike };
 type HeicDecodeFn = (opts: { buffer: ArrayBuffer }) => Promise<HeicDecodeResult>;
 type Heic2AnyFn = (opts: { blob: Blob; toType?: string; quality?: number }) => Promise<Blob | Blob[]>;
 const heicDecodeFn = heicDecode as unknown as HeicDecodeFn;
 const heic2anyFn = heic2any as unknown as Heic2AnyFn;
-// --------------------------------
+// ----------------------------------------------
 
 /** Blob を <img> 幅高にする */
 async function getImageSizeFromBlob(blob: Blob): Promise<{ width: number; height: number }> {
@@ -75,7 +75,12 @@ async function heicToJpegBlob(file: File): Promise<Blob> {
     canvas.height = decoded.height;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 生成に失敗しました');
-    const imageData = new ImageData(decoded.data, decoded.width, decoded.height);
+    // ★ ここを安全にナローイング
+    const rgba =
+      decoded.data instanceof Uint8ClampedArray
+        ? decoded.data
+        : new Uint8ClampedArray(decoded.data as ArrayBufferLike);
+    const imageData = new ImageData(rgba, decoded.width, decoded.height);
     ctx.putImageData(imageData, 0, 0);
     const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
     if (!blob) throw new Error('libheif 変換失敗');
