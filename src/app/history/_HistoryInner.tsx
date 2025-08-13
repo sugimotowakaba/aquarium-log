@@ -67,25 +67,26 @@ export default function HistoryInner() {
 
         setVisits(normalized);
 
-        // ▼ サムネ取得（photos を inner join、最新紐付け順）
+        // ▼ サムネ取得：最新の紐付け順 + 写真側の created_at も降順
         const ids = normalized.map((v) => v.id);
         if (ids.length) {
           const { data: rows, error: thumbErr } = await supabase
             .from('visit_photos')
-            .select('visit_id, created_at, photos!inner(url)')
+            // inner にして「写真が無い行」を除外
+            .select('visit_id, created_at, photos!inner(url, created_at)')
             .in('visit_id', ids)
-            .order('created_at', { ascending: false }); // visit_photos の最新から
+            .order('created_at', { ascending: false }) // visit_photos の新しい順
+            .order('created_at', { ascending: false, foreignTable: 'photos' }); // 写真自体も新しい順
 
-          if (thumbErr) {
-            console.warn('[thumbs load error]', thumbErr);
-          }
+          if (thumbErr) console.warn('[thumbs load error]', thumbErr);
 
           const firstUrl: Record<string, string> = {};
-          (rows as { visit_id: string; photos: { url: string | null } | null }[] | null)?.forEach((row) => {
-            const vid = row?.visit_id;
-            const url = row?.photos?.url || undefined;
+          (rows as any[] | null)?.forEach((row) => {
+            const vid: string | undefined = row?.visit_id;
+            const p = row?.photos; // オブジェクト or 配列 どちらでも来うる
+            const url: string | undefined = Array.isArray(p) ? p[0]?.url : p?.url;
             if (vid && url && !firstUrl[vid]) {
-              firstUrl[vid] = url; // 最新紐付けの1枚を採用
+              firstUrl[vid] = url; // 最初に見つけた（＝最新）1枚を採用
             }
           });
           setThumbs(firstUrl);
@@ -115,9 +116,9 @@ export default function HistoryInner() {
     const { error } = await supabase.from('visits').delete().eq('id', visitId);
     if (error) {
       alert('削除に失敗しました：' + error.message);
-      return;
+    } else {
+      setVisits((prev) => prev.filter((v) => v.id !== visitId));
     }
-    setVisits((prev) => prev.filter((v) => v.id !== visitId));
   };
 
   if (loading) return <main className="max-w-3xl mx-auto p-4">読み込み中…</main>;
