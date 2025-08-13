@@ -1,9 +1,7 @@
 // src/lib/uploadVisitPhoto.ts
 import { supabase } from '@/lib/supabaseClient';
 import imageCompression from 'browser-image-compression';
-// @ts-expect-error: no official types for heic-decode
 import heicDecode from 'heic-decode';
-// @ts-expect-error: no official types for heic2any
 import heic2any from 'heic2any';
 
 export type UploadResult = { url: string; path: string; width?: number; height?: number };
@@ -27,7 +25,9 @@ async function arrayBufferToJpegBlob(buf: ArrayBuffer): Promise<Blob> {
     canvas.height = bmp.height;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 生成に失敗しました');
-    // @ts-expect-error: drawImage accepts ImageBitmap at runtime
+    // DOM の型差吸収：実行時は ImageBitmap を受け付ける
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
     ctx.drawImage(bmp, 0, 0);
     const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
     if (!blob) throw new Error('JPEG 変換に失敗しました');
@@ -48,7 +48,8 @@ async function arrayBufferToJpegBlob(buf: ArrayBuffer): Promise<Blob> {
     img.onerror = reject;
     img.src = url;
   });
-  // @ts-expect-error: drawImage accepts HTMLImageElement at runtime
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
   ctx.drawImage(img, 0, 0);
   const out = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
   if (!out) throw new Error('JPEG 変換に失敗しました');
@@ -60,7 +61,7 @@ async function heicToJpegBlob(file: File): Promise<Blob> {
   // 1) libheif-js (heic-decode)
   try {
     const buf = await file.arrayBuffer();
-    const decoded = await heicDecode({ buffer: buf }); // { width, height, data } RGBA
+    const decoded: { width: number; height: number; data: Uint8ClampedArray } = await (heicDecode as any)({ buffer: buf });
     const canvas = document.createElement('canvas');
     canvas.width = decoded.width;
     canvas.height = decoded.height;
@@ -76,7 +77,7 @@ async function heicToJpegBlob(file: File): Promise<Blob> {
   }
   // 2) heic2any
   try {
-    const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 });
+    const out = await (heic2any as any)({ blob: file, toType: 'image/jpeg', quality: 0.9 });
     const blob = Array.isArray(out) ? out[0] : out;
     if (blob instanceof Blob) return blob;
   } catch {
@@ -155,9 +156,8 @@ export async function uploadVisitPhoto(file: File, visitId: string): Promise<Upl
 export type UploadManyResult = {
   uploaded: UploadResult[];
   skipped: { file: File; error: unknown }[];
-  // 互換用（既存コードの ok/ng でも読めるように）
-  ok: UploadResult[];
-  ng: { file: File; error: unknown }[];
+  ok: UploadResult[]; // 互換
+  ng: { file: File; error: unknown }[]; // 互換
 };
 
 export async function uploadVisitPhotosLenient(files: File[], visitId: string): Promise<UploadManyResult> {
