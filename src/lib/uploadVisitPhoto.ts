@@ -33,8 +33,7 @@ async function arrayBufferToJpegBlob(buf: ArrayBuffer, fallbackMime = 'image/jpe
       canvas.height = bmp.height;
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Canvas 生成に失敗');
-      // @ts-expect-error drawImage accepts ImageBitmap
-      ctx.drawImage(bmp, 0, 0);
+      ctx.drawImage(bmp as unknown as CanvasImageSource, 0, 0);
       const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
       return blob ?? new Blob([buf], { type: fallbackMime });
     }
@@ -52,8 +51,7 @@ async function arrayBufferToJpegBlob(buf: ArrayBuffer, fallbackMime = 'image/jpe
       img.onerror = reject;
       img.src = url;
     });
-    // @ts-expect-error drawImage accepts HTMLImageElement
-    ctx.drawImage(img, 0, 0);
+    ctx.drawImage(img as unknown as CanvasImageSource, 0, 0);
     const out = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
     return out ?? blob; // toBlob が null でも元の blob を返す
   } catch {
