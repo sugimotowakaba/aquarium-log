@@ -151,8 +151,16 @@ export async function uploadVisitPhoto(file: File, visitId: string): Promise<Upl
   return { url, path, width, height };
 }
 
-/** 複数ファイルを“甘めに”：成功分だけ返す（編集画面用） */
-export async function uploadVisitPhotosLenient(files: File[], visitId: string) {
+/** 複数ファイルを“甘めに”：成功分だけ返す（編集画面互換のため alias を用意） */
+export type UploadManyResult = {
+  uploaded: UploadResult[];
+  skipped: { file: File; error: unknown }[];
+  // 互換用（既存コードの ok/ng でも読めるように）
+  ok: UploadResult[];
+  ng: { file: File; error: unknown }[];
+};
+
+export async function uploadVisitPhotosLenient(files: File[], visitId: string): Promise<UploadManyResult> {
   const ok: UploadResult[] = [];
   const ng: { file: File; error: unknown }[] = [];
   for (const f of files) {
@@ -164,7 +172,7 @@ export async function uploadVisitPhotosLenient(files: File[], visitId: string) {
       ng.push({ file: f, error: e });
     }
   }
-  return { ok, ng };
+  return { uploaded: ok, skipped: ng, ok, ng };
 }
 
 // 両対応（named / default）
