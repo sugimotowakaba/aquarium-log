@@ -6,6 +6,14 @@ import heic2any from 'heic2any';
 
 export type UploadResult = { url: string; path: string; width?: number; height?: number };
 
+// ---- 型付け（any撤廃の要）----
+type HeicDecodeResult = { width: number; height: number; data: Uint8ClampedArray };
+type HeicDecodeFn = (opts: { buffer: ArrayBuffer }) => Promise<HeicDecodeResult>;
+type Heic2AnyFn = (opts: { blob: Blob; toType?: string; quality?: number }) => Promise<Blob | Blob[]>;
+const heicDecodeFn = heicDecode as unknown as HeicDecodeFn;
+const heic2anyFn = heic2any as unknown as Heic2AnyFn;
+// --------------------------------
+
 /** Blob を <img> 幅高にする */
 async function getImageSizeFromBlob(blob: Blob): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
@@ -25,7 +33,7 @@ async function arrayBufferToJpegBlob(buf: ArrayBuffer): Promise<Blob> {
     canvas.height = bmp.height;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 生成に失敗しました');
-    // DOM の型差吸収：実行時は ImageBitmap を受け付ける
+    // 実行時は ImageBitmap を受け付ける
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
     ctx.drawImage(bmp, 0, 0);
@@ -61,7 +69,7 @@ async function heicToJpegBlob(file: File): Promise<Blob> {
   // 1) libheif-js (heic-decode)
   try {
     const buf = await file.arrayBuffer();
-    const decoded: { width: number; height: number; data: Uint8ClampedArray } = await (heicDecode as any)({ buffer: buf });
+    const decoded = await heicDecodeFn({ buffer: buf });
     const canvas = document.createElement('canvas');
     canvas.width = decoded.width;
     canvas.height = decoded.height;
@@ -77,7 +85,7 @@ async function heicToJpegBlob(file: File): Promise<Blob> {
   }
   // 2) heic2any
   try {
-    const out = await (heic2any as any)({ blob: file, toType: 'image/jpeg', quality: 0.9 });
+    const out = await heic2anyFn({ blob: file, toType: 'image/jpeg', quality: 0.9 });
     const blob = Array.isArray(out) ? out[0] : out;
     if (blob instanceof Blob) return blob;
   } catch {
