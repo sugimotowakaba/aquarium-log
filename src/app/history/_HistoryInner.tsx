@@ -1,4 +1,3 @@
-// src/app/history/_HistoryInner.tsx
 'use client';
 
 import Link from 'next/link';
@@ -12,6 +11,11 @@ type VisitRow = {
   rating: number;
   note: string | null;
   aquariums: { name: string } | null;
+};
+
+type VisitPhotoJoin = {
+  visit_id: string;
+  photos: { url: string; created_at: string } | null;
 };
 
 const BADGE_STEPS = [3, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
@@ -40,7 +44,6 @@ export default function HistoryInner() {
 
         setVisits((data ?? []) as VisitRow[]);
 
-        // サムネ（各visitにつき最新1枚）
         const ids = (data ?? []).map((v) => v.id);
         if (ids.length) {
           const { data: rows } = await supabase
@@ -50,7 +53,7 @@ export default function HistoryInner() {
             .order('created_at', { ascending: false });
 
           const firstUrl: Record<string, string> = {};
-          (rows ?? []).forEach((row: any) => {
+          (rows as VisitPhotoJoin[] | null)?.forEach((row) => {
             const url = row?.photos?.url;
             const vid = row?.visit_id;
             if (vid && url && !firstUrl[vid]) {
@@ -68,17 +71,15 @@ export default function HistoryInner() {
   }, []);
 
   const count = visits.length;
-  const { achieved, nextTarget, remain } = useMemo(() => {
-    const got = BADGE_STEPS.filter((n) => n <= count);
+  const { nextTarget, remain } = useMemo(() => {
     const next = BADGE_STEPS.find((n) => n > count) ?? null;
-    return { achieved: got, nextTarget: next, remain: next ? next - count : 0 };
+    return { nextTarget: next, remain: next ? next - count : 0 };
   }, [count]);
 
   const onDelete = async (visitId: string) => {
     if (!confirm('この記録を削除しますか？')) return;
-    // 関連写真削除（所有者RLS前提）
     const { data: vp } = await supabase.from('visit_photos').select('photo_id').eq('visit_id', visitId);
-    const photoIds = (vp ?? []).map((x: any) => x.photo_id);
+    const photoIds = (vp as { photo_id: string }[] | null)?.map((x) => x.photo_id) ?? [];
     if (photoIds.length) {
       await supabase.from('photos').delete().in('id', photoIds);
     }

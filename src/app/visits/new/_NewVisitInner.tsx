@@ -1,10 +1,9 @@
-// src/app/visits/new/_NewVisitInner.tsx
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
-import { uploadVisitPhoto } from '@/lib/uploadVisitPhoto';
+import uploadVisitPhoto from '@/lib/uploadVisitPhoto'; // ★ ここを default import に
 
 type Aquarium = { id: string; name: string };
 type VisitInsert = {
@@ -29,18 +28,15 @@ export default function NewVisitInner() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 初期選択（履歴の「同じ館で記録する」からの導線を考慮）
   const initialAquariumId = sp.get('aquariumId') ?? '';
 
   useEffect(() => {
     (async () => {
-      // ログイン必須（してなければ /auth へ）
       const { data: s } = await supabase.auth.getSession();
       if (!s.session) {
         router.replace('/auth');
         return;
       }
-      // 館マスタ取得
       const { data, error } = await supabase
         .from('aquariums')
         .select('id,name')
@@ -65,7 +61,6 @@ export default function NewVisitInner() {
       const { data: s } = await supabase.auth.getSession();
       if (!s.session) throw new Error('ログインが必要です');
 
-      // visits 追加
       const { data: inserted, error: insErr } = await supabase
         .from('visits')
         .insert({
@@ -80,11 +75,9 @@ export default function NewVisitInner() {
       if (insErr) throw insErr;
       const visitId = inserted!.id as string;
 
-      // 写真があればアップロード→photos/visit_photos 連携
       if (photoFile) {
         const up = await uploadVisitPhoto(photoFile, visitId);
         if (!up?.path) {
-          // 写真失敗は致命ではないので記録は残して続行
           console.warn('[photo upload failed]', up);
         }
       }
