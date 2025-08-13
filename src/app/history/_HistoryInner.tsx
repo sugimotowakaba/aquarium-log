@@ -1,3 +1,4 @@
+// src/app/history/_HistoryInner.tsx
 'use client';
 
 import Link from 'next/link';
@@ -19,13 +20,7 @@ type RawVisitRow = {
   visited_on: string;
   rating: number | null;
   note: string | null;
-  // Supabase のリレーション設定によって単体 or 配列で返る可能性がある
   aquariums: { name: string } | { name: string }[] | null;
-};
-
-type VisitPhotoJoin = {
-  visit_id: string;
-  photos: { url: string; created_at: string } | null;
 };
 
 const BADGE_STEPS = [3, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
@@ -52,7 +47,7 @@ export default function HistoryInner() {
           .order('visited_on', { ascending: false });
         if (error) throw error;
 
-        // 取得結果を VisitRow に正規化
+        // 正規化
         const normalized: VisitRow[] = (data ?? []).map((r: RawVisitRow) => {
           let aq: { name: string } | null = null;
           if (Array.isArray(r.aquariums)) {
@@ -72,23 +67,25 @@ export default function HistoryInner() {
 
         setVisits(normalized);
 
+        // ▼ サムネ取得（photos を inner join、最新紐付け順）
         const ids = normalized.map((v) => v.id);
         if (ids.length) {
           const { data: rows, error: thumbErr } = await supabase
             .from('visit_photos')
-            .select('visit_id, photos(url, created_at)')
+            .select('visit_id, created_at, photos!inner(url)')
             .in('visit_id', ids)
-            .order('created_at', { ascending: false, foreignTable: 'photos' });
+            .order('created_at', { ascending: false }); // visit_photos の最新から
 
           if (thumbErr) {
             console.warn('[thumbs load error]', thumbErr);
           }
+
           const firstUrl: Record<string, string> = {};
           (rows as { visit_id: string; photos: { url: string | null } | null }[] | null)?.forEach((row) => {
             const vid = row?.visit_id;
             const url = row?.photos?.url || undefined;
             if (vid && url && !firstUrl[vid]) {
-                firstUrl[vid] = url;
+              firstUrl[vid] = url; // 最新紐付けの1枚を採用
             }
           });
           setThumbs(firstUrl);
@@ -130,7 +127,7 @@ export default function HistoryInner() {
       <h1 className="text-xl font-semibold">履歴</h1>
       {error && <p className="text-sm text-red-600">{error}</p>}
 
-      {/* バッジパネル */}
+      {/* バッジ */}
       <section className="rounded-lg border p-3">
         <h2 className="font-medium mb-2">バッジ</h2>
         <div className="flex flex-wrap gap-2">
