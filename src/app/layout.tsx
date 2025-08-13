@@ -1,7 +1,7 @@
 // src/app/layout.tsx
 import './globals.css';
 import type { Metadata, Viewport } from 'next';
-import TopNav from '@/components/TopNav';
+import BottomTab from '@/components/BottomTab';
 
 export const metadata: Metadata = {
   title: 'SuizokuLog（すいぞくログ）',
@@ -15,7 +15,6 @@ export const metadata: Metadata = {
     ],
     apple: { url: '/icons/icon-192.png' },
   },
-  // themeColor / viewport はここでは設定しない
   manifest: '/manifest.json',
 };
 
@@ -26,22 +25,27 @@ export const viewport: Viewport = {
   themeColor: '#0ea5e9',
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="ja">
       <head>
+        {/* manifest などは冗長でもOK */}
         <link rel="manifest" href="/manifest.json" />
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
         <meta name="theme-color" content="#0ea5e9" />
       </head>
       <body className="min-h-screen bg-white text-gray-900 antialiased">
-        <TopNav />
-        {/* 固定ヘッダー分の余白（12 = 48px） */}
-        <div className="pt-12">
-          <div className="mx-auto max-w-3xl px-4">
-            {children}
-          </div>
-        </div>
+        {/* ページ本体は中央寄せ（モバイル幅） */}
+        <main className="mx-auto max-w-[420px] px-4 pb-28 pt-4">
+          {children}
+        </main>
+
+        {/* 下ナビ（使わないなら削除OK） */}
+        <BottomTab />
       </body>
     </html>
   );

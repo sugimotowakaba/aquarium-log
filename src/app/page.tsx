@@ -1,155 +1,236 @@
-// src/app/page.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 
-type Visit = {
-  id: string;
-  aquarium_id: string | null;
-  visited_on: string;
-  rating: number | null;
-  note: string | null;
-  aquariums: { name: string } | null;
-};
-type Photo = { visit_id: string; url: string };
+// 小パーツ
+function ShadowCard({ className = '', children }: { className?: string; children: React.ReactNode }) {
+  return (
+    <div className={'rounded-2xl border border-sky-100 bg-white shadow-[0_2px_10px_rgba(15,80,140,0.08)] ' + className}>
+      {children}
+    </div>
+  );
+}
+
+function StatCard({ value, label }: { value: number | string; label: string }) {
+  return (
+    <ShadowCard className="flex-1 px-5 py-4 text-center">
+      <div className="text-[28px] leading-none font-semibold text-sky-600">{value}</div>
+      <div className="mt-2 text-[12px] text-gray-500">{label}</div>
+    </ShadowCard>
+  );
+}
+
+function BadgeCoin({
+  src,
+  label,
+  tintFrom = '#E2F2FF',
+  tintTo = '#FAFBFF',
+}: {
+  src: string;
+  label: string;
+  tintFrom?: string;
+  tintTo?: string;
+}) {
+  return (
+    <div className="flex w-24 flex-col items-center gap-2">
+      <div
+        className="grid h-20 w-20 place-items-center rounded-full"
+        style={{ background: `linear-gradient(135deg, ${tintFrom}, ${tintTo})` }}
+      >
+        <Image src={src} alt="" width={40} height={40} />
+      </div>
+      <div className="text-[12px] text-gray-600 text-center leading-tight">{label}</div>
+    </div>
+  );
+}
+
+function ProgressBar({ value, max }: { value: number; max: number }) {
+  const pct = Math.max(0, Math.min(100, Math.round((value / max) * 100)));
+  return (
+    <div className="h-2 w-full overflow-hidden rounded-full bg-sky-100">
+      <div className="h-full rounded-full bg-sky-400 transition-[width]" style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+function GoalRow({
+  iconSrc,
+  title,
+  subtitle,
+  value,
+  max,
+}: {
+  iconSrc: string;
+  title: string;
+  subtitle: string;
+  value: number;
+  max: number;
+}) {
+  return (
+    <ShadowCard className="flex items-start gap-3 px-4 py-3">
+      <div className="mt-1">
+        <Image src={iconSrc} alt="" width={44} height={44} className="rounded-xl" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="font-semibold text-[15px] text-gray-800">{title}</div>
+        <div className="mt-0.5 text-[12px] text-gray-500">{subtitle}</div>
+        <div className="mt-2">
+          <ProgressBar value={value} max={max} />
+          <div className="mt-1 flex justify-between text-[12px] text-gray-500">
+            <span>
+              {value} / {max}
+            </span>
+            <span>あと{Math.max(0, max - value)}</span>
+          </div>
+        </div>
+      </div>
+    </ShadowCard>
+  );
+}
+
+function Fab() {
+  return (
+    <Link
+      href="/visits/new"
+      className="fixed bottom-24 right-5 grid h-16 w-16 place-items-center rounded-full bg-[#3C73B9] text-white shadow-[0_10px_20px_rgba(20,80,140,0.25)]"
+      aria-label="記録する"
+    >
+      <Image src="/assets/icons/fab-pencil.svg" alt="" width={28} height={28} />
+    </Link>
+  );
+}
+
+// 型（any回避）
+type VisitIdRow = { id: string };
+type VisitAquariumRow = { aquarium_id: string | null };
 
 export default function HomePage() {
-  const [recent, setRecent] = useState<Visit[]>([]);
-  const [thumbs, setThumbs] = useState<Record<string, string | undefined>>({});
   const [loading, setLoading] = useState(true);
-  const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [visitCount, setVisitCount] = useState(0);
+  const [aquariumCount, setAquariumCount] = useState(0);
+  const [photoCount, setPhotoCount] = useState(0);
 
   useEffect(() => {
     (async () => {
       try {
-        setLoading(true);
-        setErrMsg(null);
-
-        // 最近の訪問 5件
-        const { data, error } = await supabase
-          .from('visits')
-          .select('id, aquarium_id, visited_on, rating, note, aquariums(name)')
-          .order('visited_on', { ascending: false })
-          .limit(5);
-
-        if (error) {
-          setErrMsg(error.message);
+        const { data: s } = await supabase.auth.getSession();
+        const uid = s.session?.user.id;
+        if (!uid) {
+          window.location.href = '/auth';
           return;
         }
 
-        // 型正規化：aquariums が配列で返る場合に先頭要素を採用
-        type RawVisit = {
-          id: string;
-          aquarium_id: string | null;
-          visited_on: string;
-          rating: number | null;
-          note: string | null;
-          aquariums: { name: string } | { name: string }[] | null;
-        };
-        const raw = (data ?? []) as RawVisit[];
-        const rows: Visit[] = raw.map(v => ({
-          id: v.id,
-          aquarium_id: v.aquarium_id,
-          visited_on: v.visited_on,
-          rating: v.rating,
-          note: v.note,
-          aquariums: Array.isArray(v.aquariums) ? (v.aquariums[0] ?? null) : (v.aquariums ?? null),
-        }));
-        setRecent(rows);
+        // 訪問回数
+        {
+          const { count } = await supabase
+            .from('visits')
+            .select('id', { head: true, count: 'exact' })
+            .eq('user_id', uid);
+          setVisitCount(count ?? 0);
+        }
 
-        // サムネ取得
-        const ids = rows.map(v => v.id);
-        if (ids.length > 0) {
-          const { data: ph, error: phErr } = await supabase
-            .from('photos')
-            .select('visit_id,url')
-            .in('visit_id', ids);
-          if (!phErr && ph) {
-            const firstByVisit: Record<string, string> = {};
-            (ph as Photo[]).forEach(p => {
-              if (!firstByVisit[p.visit_id]) firstByVisit[p.visit_id] = p.url;
-            });
-            setThumbs(firstByVisit);
+        // 水族館数（distinct）
+        {
+          const { data } = await supabase
+            .from('visits')
+            .select('aquarium_id')
+            .eq('user_id', uid);
+          const arr = (data ?? []) as VisitAquariumRow[];
+          const distinct = new Set(arr.map((r) => String(r.aquarium_id ?? '')));
+          distinct.delete(''); // nullを除外
+          setAquariumCount(distinct.size);
+        }
+
+        // 写真枚数：visit_photos の件数
+        {
+          const { data: vids } = await supabase.from('visits').select('id').eq('user_id', uid);
+          const ids = ((vids ?? []) as VisitIdRow[]).map((r) => r.id);
+          if (ids.length) {
+            const { count } = await supabase
+              .from('visit_photos')
+              .select('photo_id', { head: true, count: 'exact' })
+              .in('visit_id', ids);
+            setPhotoCount(count ?? 0);
+          } else {
+            setPhotoCount(0);
           }
         }
+      } catch (e) {
+        console.error('[home load]', e);
       } finally {
         setLoading(false);
       }
     })();
   }, []);
 
+  const goals = useMemo(
+    () => [
+      { icon: '/assets/badge-goal-visit20.svg', title: '海景の収集家', subtitle: '20回訪問する', value: visitCount, max: 20 },
+      { icon: '/assets/badge-goal-places10.svg', title: '湖の観察者', subtitle: '10箇所の水族館に行く', value: aquariumCount, max: 10 },
+      { icon: '/assets/badge-goal-same5.svg', title: '馴染みの水面', subtitle: '同じ水族館に5回行く', value: Math.min(visitCount, 5), max: 5 },
+    ],
+    [visitCount, aquariumCount]
+  );
+
   return (
-    <main className="max-w-5xl mx-auto p-6 space-y-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">SuizokuLog（すいぞくログ）</h1>
-        <nav className="text-sm flex gap-4">
-          <Link className="underline" href="/aquariums">水族館一覧</Link>
-          <Link className="underline" href="/aquariums/map">地図</Link>
-          <Link className="underline" href="/history">記録</Link>
-        </nav>
+    <div className="min-h-screen bg-[#EEF6FB]">
+      {/* ヘッダー（ロゴ） */}
+      <header className="mx-auto max-w-[420px] px-4 pt-4 pb-3">
+        <div className="flex items-center gap-2">
+          <Image src="/assets/logo-mark.svg" alt="SuizokuLog" width={32} height={32} />
+          <div className="text-[20px] font-semibold text-sky-700">SuizokuLog</div>
+        </div>
       </header>
 
-      {/* 近くの水族館への導線（すでに実装済みなら残す/調整） */}
-      <section className="p-4 rounded-xl border">
-        <h2 className="text-lg font-semibold mb-2">近くの水族館を探す</h2>
-        <p className="text-sm text-gray-600 mb-3">位置情報を許可すると現在地から近い順に表示できます。</p>
-        <Link href="/aquariums/map" className="inline-block px-4 py-2 rounded bg-blue-600 text-white text-sm">
-          地図を開く
-        </Link>
-      </section>
-
-      {/* 最近の訪問 */}
-      <section>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold">最近の訪問</h2>
-          <Link className="text-sm underline" href="/history">すべて見る</Link>
+      {/* 本文 */}
+      <main className="mx-auto max-w-[420px] px-4 pb-28">
+        {/* 上の3カード（アイコン無し） */}
+        <div className="grid grid-cols-3 gap-3">
+          <StatCard value={loading ? '—' : visitCount} label="訪問回数" />
+          <StatCard value={loading ? '—' : aquariumCount} label="水族館数" />
+          <StatCard value={loading ? '—' : photoCount} label="写真枚数" />
         </div>
 
-        {loading && <p className="text-gray-600 text-sm">読み込み中…</p>}
-        {errMsg && <p className="text-red-600 text-sm">読み込みエラー：{errMsg}</p>}
-        {!loading && !errMsg && recent.length === 0 && (
-          <p className="text-gray-600 text-sm">まだ記録がありません。まずは1件記録してみましょう。</p>
-        )}
+        {/* 獲得バッジ（固定3種の見た目。DB連携は別途で可） */}
+        <ShadowCard className="mt-5 p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <Image src="/assets/icons/bell.svg" alt="" width={18} height={18} />
+            <h2 className="text-[16px] font-semibold text-gray-800">獲得バッジ</h2>
+          </div>
 
-        <ul className="grid sm:grid-cols-2 gap-3">
-          {recent.map(v => {
-            const thumb = thumbs[v.id];
-            return (
-              <li key={v.id} className="border rounded p-3 flex gap-3">
-                {thumb && (
-                  <Image
-                    src={thumb}
-                    alt=""
-                    width={96}
-                    height={96}
-                    className="rounded object-cover"
-                    style={{ width: 96, height: 96 }}
-                  />
-                )}
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">{v.aquariums?.name ?? '（不明）'}</span>
-                    <span className="text-sm text-gray-600">{v.visited_on}</span>
-                  </div>
-                  <div className="text-sm text-gray-600">★{v.rating ?? '-'}</div>
-                  <div className="mt-2 flex gap-3">
-                    {v.aquarium_id && (
-                      <Link className="underline text-sm" href={`/visits/new?aquarium=${v.aquarium_id}`}>
-                        同じ水族館で記録する
-                      </Link>
-                    )}
-                    <Link className="underline text-sm" href={`/visits/${v.id}/edit`}>編集</Link>
-                  </div>
-                  {v.note && <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap">{v.note}</p>}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      </section>
-    </main>
+          <div className="flex gap-4">
+            <BadgeCoin src="/assets/badge-visit10.svg" label="青の常客" />
+            <BadgeCoin src="/assets/badge-places5.svg" label="海辺の記録者" tintFrom="#D9F2F0" tintTo="#E6F7FB" />
+            <BadgeCoin src="/assets/badge-revisit.svg" label="再訪の波紋" tintFrom="#FFF1B8" tintTo="#FFF9DB" />
+          </div>
+
+          <hr className="my-4 border-sky-100" />
+
+          <div className="mb-2 flex items-center gap-2">
+            <Image src="/assets/icons/megaphone.svg" alt="" width={18} height={18} />
+            <h3 className="text-[15px] font-semibold text-gray-800">次のバッジ獲得まで</h3>
+          </div>
+
+          <div className="space-y-3">
+            {goals.map((g) => (
+              <GoalRow
+                key={g.title}
+                iconSrc={g.icon}
+                title={g.title}
+                subtitle={g.subtitle}
+                value={g.value}
+                max={g.max}
+              />
+            ))}
+          </div>
+        </ShadowCard>
+      </main>
+
+      {/* 右下FAB */}
+      <Fab />
+    </div>
   );
 }
