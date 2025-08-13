@@ -1,215 +1,168 @@
 // src/lib/uploadVisitPhoto.ts
-// HEIC → JPEG 変換（createImageBitmap → heic2any → heic-decode）＋ 圧縮 ＋ Storage アップロード
-// ・厳格版：uploadVisitPhotos（失敗したら throw）
-// ・寛容版：uploadVisitPhotosLenient（変換できないファイルをスキップして続行）
 import { supabase } from '@/lib/supabaseClient';
+import imageCompression from 'browser-image-compression';
+// これらは dev 依存で型が無いことがあるので any 許容
+// 型エラーが出る場合は @types が無いので d.ts を用意するか、tsconfig の skipLibCheck を true にしてください
+// @ts-expect-error no types
+import heicDecode from 'heic-decode';
+// @ts-expect-error no types
+import heic2any from 'heic2any';
 
 export type UploadResult = { url: string; path: string; width?: number; height?: number };
-export type UploadBatchResult = { uploaded: UploadResult[]; skipped: string[] };
 
-class StageError extends Error {
-  stage: string;
-  original?: unknown;
-  constructor(stage: string, message: string, original?: unknown) {
-    super(`[${stage}] ${message}`);
-    this.stage = stage;
-    this.original = original;
-  }
+/** Blob を <img> 幅高にする */
+async function getImageSizeFromBlob(blob: Blob): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = reject;
+    img.src = URL.createObjectURL(blob);
+  });
 }
 
-// ---- ここが肝：ブラウザ専用ライブラリは必要なときにだけ読み込む（SSR回避） ----
-async function loadImageCompression() {
-  const mod = await import('browser-image-compression');
-  return mod.default as typeof import('browser-image-compression')['default'];
-}
-async function loadHeic2Any() {
-  const mod = await import('heic2any');
-  return mod.default as typeof import('heic2any')['default'];
-}
-async function loadHeicDecode() {
-  const mod = await import('heic-decode');
-  return mod.default as typeof import('heic-decode')['default'];
-}
-
-const isHeicLike = (file: File): boolean => {
-  const name = (file?.name || '').toLowerCase();
-  const type = (file?.type || '').toLowerCase();
-  return name.endsWith('.heic') || name.endsWith('.heif') || type.includes('heic') || type.includes('heif');
-};
-const safeName = (file: File, fallback = 'photo.jpg'): string => (file?.name && file.name.trim()) || fallback;
-const guessExt = (file: File, fallback = 'jpg'): string => {
-  const t = (file?.type || '').toLowerCase();
-  if (t.includes('/')) {
-    const p = t.split('/')[1];
-    if (p) return p.replace('jpeg', 'jpg');
-  }
-  const n = (file?.name || '').toLowerCase();
-  const m = n.match(/\.(\w{3,5})$/);
-  if (m?.[1]) return m[1].replace('jpeg', 'jpg');
-  return fallback;
-};
-const uuid = (): string =>
-  (typeof crypto !== 'undefined' && 'randomUUID' in crypto && typeof crypto.randomUUID === 'function')
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-// ---------- 変換：HEICを安全にJPEGへ（3段構え） ----------
-async function ensureJpeg(file: File): Promise<File> {
-  const originalName = safeName(file);
-
-  if (!isHeicLike(file)) {
-    return new File([file], originalName, { type: file.type || 'image/jpeg' });
-  }
-
-  // 1) createImageBitmap（ブラウザ環境のみ）
-  try {
-    if (typeof window !== 'undefined' && typeof (window as unknown as { createImageBitmap?: unknown }).createImageBitmap === 'function') {
-      const bitmap = await createImageBitmap(file as unknown as ImageBitmapSource);
-      const canvas = document.createElement('canvas');
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('Canvas 2D not available');
-      ctx.drawImage(bitmap, 0, 0);
-      const jpgBlob: Blob = await new Promise((resolve, reject) =>
-        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/jpeg', 0.9)
-      );
-      const name = originalName.replace(/\.(heic|heif)$/i, '.jpg');
-      return new File([jpgBlob], name, { type: 'image/jpeg' });
-    }
-  } catch (e) {
-    console.warn('[createImageBitmap failed]', e);
-  }
-
-  // 2) heic2any（動的 import）
-  try {
-    const heic2any = await loadHeic2Any();
-    const blob = (await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 })) as Blob;
-    const name = originalName.replace(/\.(heic|heif)$/i, '.jpg');
-    return new File([blob], name, { type: 'image/jpeg' });
-  } catch (e) {
-    console.warn('[heic2any failed]', e);
-  }
-
-  // 3) heic-decode（動的 import → RGBA を Canvas 経由で JPEG へ）
-  try {
-    const heicDecode = await loadHeicDecode();
-    const buf = await file.arrayBuffer();
-    const decoded = await heicDecode({ data: new Uint8Array(buf) });
-    const { width, height, data } = decoded;
+/** ArrayBuffer → Blob(JPEG) を canvas で作る */
+async function arrayBufferToJpegBlob(buf: ArrayBuffer): Promise<Blob> {
+  // createImageBitmap が使えるなら高品質
+  if (typeof createImageBitmap === 'function') {
+    const bmp = await createImageBitmap(new Blob([buf]));
     const canvas = document.createElement('canvas');
-    canvas.width = width; canvas.height = height;
+    canvas.width = bmp.width;
+    canvas.height = bmp.height;
     const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Canvas 2D context not available');
-    const imageData = new ImageData(new Uint8ClampedArray(data), width, height);
+    if (!ctx) throw new Error('Canvas 生成に失敗しました');
+    // @ts-ignore
+    ctx.drawImage(bmp, 0, 0);
+    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
+    if (!blob) throw new Error('JPEG 変換に失敗しました');
+    return blob;
+  }
+  // フォールバック：<img> 経由
+  const blob = new Blob([buf]);
+  const { width, height } = await getImageSizeFromBlob(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 生成に失敗しました');
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = reject;
+    img.src = url;
+  });
+  // @ts-ignore
+  ctx.drawImage(img, 0, 0);
+  const out = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
+  if (!out) throw new Error('JPEG 変換に失敗しました');
+  return out;
+}
+
+/** HEIC/HEIF を JPEG Blob に変換（多段フォールバック） */
+async function heicToJpegBlob(file: File): Promise<Blob> {
+  // 1) libheif-js (heic-decode)
+  try {
+    const buf = await file.arrayBuffer();
+    const decoded = await heicDecode({ buffer: buf }); // { width, height, data } RGBA
+    const canvas = document.createElement('canvas');
+    canvas.width = decoded.width;
+    canvas.height = decoded.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas 生成に失敗しました');
+    const imageData = new ImageData(decoded.data, decoded.width, decoded.height);
     ctx.putImageData(imageData, 0, 0);
-    const jpgBlob: Blob = await new Promise((resolve, reject) =>
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/jpeg', 0.9)
-    );
-    const name = originalName.replace(/\.(heic|heif)$/i, '.jpg');
-    return new File([jpgBlob], name, { type: 'image/jpeg' });
-  } catch (e: unknown) {
-    throw new StageError('HEIC→JPEG 変換', '全変換処理が失敗しました', e);
-  }
-}
-
-// ---------- 画像サイズ取得（失敗しても無視） ----------
-async function getImageSizeSafe(file: File): Promise<{ width?: number; height?: number }> {
-  try {
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () => resolve((fr.result as string) || '');
-      fr.onerror = reject;
-      fr.readAsDataURL(file);
-    });
-    if (!dataUrl) return {};
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = reject;
-      i.src = dataUrl;
-    });
-    return { width: img.width, height: img.height };
+    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
+    if (!blob) throw new Error('libheif 変換失敗');
+    return blob;
   } catch {
-    return {};
+    // 続行
   }
-}
-
-// ---------- アップロード（厳格版：失敗したら throw） ----------
-export async function uploadVisitPhotos(files: File[], userId: string): Promise<UploadResult[]> {
-  // セッション確認
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new StageError('セッション確認', 'セッションが失効しました。再サインインしてください。');
-
-  const results: UploadResult[] = [];
-  const safeFiles = Array.isArray(files) ? files.filter((f): f is File => !!f) : [];
-
-  for (const original of safeFiles) {
-    const pickedName = safeName(original);
-    try {
-      // 1) 変換
-      const jpgFile = await ensureJpeg(original);
-
-      // 2) 圧縮（動的 import）
-      const imageCompression = await loadImageCompression();
-      const compressedBlob = (await imageCompression(jpgFile, {
-        maxWidthOrHeight: 2048,
-        maxSizeMB: 3,
-        useWebWorker: true,
-        initialQuality: 0.82,
-      })) as Blob;
-
-      // 3) File化（MIME保証）
-      const finalFile = new File([compressedBlob], safeName(jpgFile, 'photo.jpg'), {
-        type: (compressedBlob.type || jpgFile.type || 'image/jpeg'),
-      });
-
-      // 4) Storageへ
-      const ext = (guessExt(finalFile) || 'jpg').replace('jpeg', 'jpg');
-      const path = `${userId}/${uuid()}.${ext}`;
-      const { error: upErr } = await supabase.storage
-        .from('visit-photos')
-        .upload(path, finalFile, { upsert: true, cacheControl: '3600' });
-      if (upErr) throw new StageError('Storageアップロード', upErr.message || 'Storage upload failed', upErr);
-
-      // 5) 公開URL
-      const { data } = supabase.storage.from('visit-photos').getPublicUrl(path);
-
-      // 6) 寸法
-      const dims = await getImageSizeSafe(finalFile);
-
-      results.push({ url: data.publicUrl, path, ...dims });
-    } catch (e: unknown) {
-      console.error('[Upload pipeline failed]', { file: pickedName, error: e });
-      throw e;
-    }
-  }
-
-  return results;
-}
-
-// ---------- アップロード（寛容版：失敗ファイルはスキップ） ----------
-export async function uploadVisitPhotosLenient(files: File[], userId: string): Promise<UploadBatchResult> {
-  const uploaded: UploadResult[] = [];
-  const skipped: string[] = [];
-
-  // セッション確認（ここでは落とさない）
+  // 2) heic2any
   try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return { uploaded, skipped };
+    const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 });
+    // heic2any は Blob or Blob[] を返す
+    const blob = Array.isArray(out) ? out[0] : out;
+    if (blob instanceof Blob) return blob;
   } catch {
-    return { uploaded, skipped };
+    // 続行
+  }
+  // 3) createImageBitmap で読み込み→JPEG
+  try {
+    const buf = await file.arrayBuffer();
+    return await arrayBufferToJpegBlob(buf);
+  } catch {
+    // 続行
+  }
+  throw new Error('[HEIC→JPEG 変換] 全変換処理が失敗しました');
+}
+
+/** 画像を 2MB 目安で圧縮して JPEG Blob を作る */
+async function toJpegAndCompress(file: File): Promise<{ blob: Blob; width: number; height: number }> {
+  const ext = (file.name.split('.').pop() ?? '').toLowerCase();
+  let jpegBlob: Blob;
+  if (ext === 'heic' || ext === 'heif') {
+    jpegBlob = await heicToJpegBlob(file);
+  } else if (file.type === 'image/heic' || file.type === 'image/heif') {
+    jpegBlob = await heicToJpegBlob(file);
+  } else if (file.type === 'image/jpeg' || ext === 'jpg' || ext === 'jpeg') {
+    jpegBlob = file;
+  } else {
+    // PNG などは JPEG に寄せる
+    const buf = await file.arrayBuffer();
+    jpegBlob = await arrayBufferToJpegBlob(buf);
   }
 
-  const safeFiles = Array.isArray(files) ? files.filter((f): f is File => !!f) : [];
-  for (const original of safeFiles) {
-    const name = safeName(original, 'photo.heic');
-    try {
-      const [res] = await uploadVisitPhotos([original], userId);
-      uploaded.push(res);
-    } catch {
-      skipped.push(name);
-    }
-  }
-  return { uploaded, skipped };
+  // 圧縮（目安 2MB）
+  const compressed = await imageCompression(new File([jpegBlob], 'in.jpg', { type: 'image/jpeg' }), {
+    maxSizeMB: 2,
+    maxWidthOrHeight: 4000,
+    initialQuality: 0.9,
+    useWebWorker: true,
+  });
+
+  const { width, height } = await getImageSizeFromBlob(compressed);
+  return { blob: compressed, width, height };
 }
+
+/** Supabase Storage へアップロードし、DB(photos, visit_photos)へ関連付け */
+export async function uploadVisitPhoto(file: File, visitId: string): Promise<UploadResult> {
+  const { data: s } = await supabase.auth.getSession();
+  const userId = s.session?.user.id;
+  if (!userId) throw new Error('ログインが必要です');
+
+  // 画像を JPEG+圧縮に
+  const { blob, width, height } = await toJpegAndCompress(file);
+
+  const filename = `${Date.now()}.jpg`;
+  const path = `${userId}/${visitId}/${filename}`;
+
+  // Storage へ保存
+  const { error: upErr } = await supabase.storage.from('photos').upload(path, blob, {
+    contentType: 'image/jpeg',
+    upsert: false,
+  });
+  if (upErr) throw upErr;
+
+  // 公開URL 取得
+  const { data: pub } = supabase.storage.from('photos').getPublicUrl(path);
+  const url = pub?.publicUrl;
+  if (!url) throw new Error('公開URLの取得に失敗しました');
+
+  // photos にレコードを作成 → id を取得
+  const { data: pIns, error: pErr } = await supabase
+    .from('photos')
+    .insert({ path, url, width, height })
+    .select('id')
+    .single();
+  if (pErr) throw pErr;
+  const photoId = pIns!.id as string;
+
+  // visit_photos に紐づけ
+  const { error: vpErr } = await supabase.from('visit_photos').insert({ visit_id: visitId, photo_id: photoId });
+  if (vpErr) throw vpErr;
+
+  return { url, path, width, height };
+}
+
+// 両対応（named / default）
+export default uploadVisitPhoto;
