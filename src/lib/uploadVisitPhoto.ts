@@ -6,15 +6,14 @@ import heic2any from 'heic2any';
 
 export type UploadResult = { url: string; path: string; width?: number; height?: number };
 
-// ---- heic ライブラリの最小型 ----
+// heic ライブラリ最小型
 type HeicDecodeResult = { width: number; height: number; data: Uint8ClampedArray | ArrayBufferLike };
 type HeicDecodeFn = (opts: { buffer: ArrayBuffer }) => Promise<HeicDecodeResult>;
 type Heic2AnyFn = (opts: { blob: Blob; toType?: string; quality?: number }) => Promise<Blob | Blob[]>;
 const heicDecodeFn = heicDecode as unknown as HeicDecodeFn;
 const heic2anyFn = heic2any as unknown as Heic2AnyFn;
-// ---------------------------------
 
-/** Blob → naturalWidth/Height を取得 */
+// 画像サイズ取得
 async function getImageSizeFromBlob(blob: Blob): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -24,42 +23,45 @@ async function getImageSizeFromBlob(blob: Blob): Promise<{ width: number; height
   });
 }
 
-/** ArrayBuffer → JPEG Blob（Canvas描画） */
-async function arrayBufferToJpegBlob(buf: ArrayBuffer): Promise<Blob> {
-  if (typeof createImageBitmap === 'function') {
-    const bmp = await createImageBitmap(new Blob([buf]));
+// ArrayBuffer → JPEG Blob（toBlob が null の場合は“元の Blob”を返す）
+async function arrayBufferToJpegBlob(buf: ArrayBuffer, fallbackMime = 'image/jpeg'): Promise<Blob> {
+  try {
+    if (typeof createImageBitmap === 'function') {
+      const bmp = await createImageBitmap(new Blob([buf]));
+      const canvas = document.createElement('canvas');
+      canvas.width = bmp.width;
+      canvas.height = bmp.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas 生成に失敗');
+      // @ts-expect-error drawImage accepts ImageBitmap
+      ctx.drawImage(bmp, 0, 0);
+      const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
+      return blob ?? new Blob([buf], { type: fallbackMime });
+    }
+    const blob = new Blob([buf], { type: fallbackMime });
+    const { width, height } = await getImageSizeFromBlob(blob);
     const canvas = document.createElement('canvas');
-    canvas.width = bmp.width;
-    canvas.height = bmp.height;
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Canvas 生成に失敗しました');
-    ctx.drawImage(bmp, 0, 0);
-    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
-    if (!blob) throw new Error('JPEG 変換に失敗しました');
-    return blob;
+    if (!ctx) return blob; // フォールバック
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = url;
+    });
+    // @ts-expect-error drawImage accepts HTMLImageElement
+    ctx.drawImage(img, 0, 0);
+    const out = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
+    return out ?? blob; // toBlob が null でも元の blob を返す
+  } catch {
+    return new Blob([buf], { type: fallbackMime });
   }
-  // フォールバック：<img> 経由
-  const blob = new Blob([buf]);
-  const { width, height } = await getImageSizeFromBlob(blob);
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas 生成に失敗しました');
-  const url = URL.createObjectURL(blob);
-  const img = new Image();
-  await new Promise((resolve, reject) => {
-    img.onload = resolve;
-    img.onerror = reject;
-    img.src = url;
-  });
-  ctx.drawImage(img, 0, 0);
-  const out = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
-  if (!out) throw new Error('JPEG 変換に失敗しました');
-  return out;
 }
 
-/** ファイルがJPEGっぽいかを強判定（MIME / 拡張子 / マジックバイト） */
+// JPEG推定
 function isLikelyJpeg(file: File, buf?: ArrayBuffer): boolean {
   const name = file.name || '';
   const ext = (name.split('.').pop() ?? '').toLowerCase();
@@ -67,15 +69,14 @@ function isLikelyJpeg(file: File, buf?: ArrayBuffer): boolean {
   if (ext === 'jpg' || ext === 'jpeg') return true;
   if (buf && buf.byteLength >= 3) {
     const u8 = new Uint8Array(buf);
-    // JPEG マジック: FF D8 FF
-    if (u8[0] === 0xff && u8[1] === 0xd8 && u8[2] === 0xff) return true;
+    if (u8[0] === 0xff && u8[1] === 0xd8 && u8[2] === 0xff) return true; // FF D8 FF
   }
   return false;
 }
 
-/** HEIC/HEIF → JPEG Blob（decode → createImageData で確実化） */
+// HEIC → JPEG（全部ダメでも“必ず Blob を返す”）
 async function heicToJpegBlob(file: File): Promise<Blob> {
-  // 1) libheif-js (heic-decode)
+  // 1) heic-decode
   try {
     const buf = await file.arrayBuffer();
     const decoded = await heicDecodeFn({ buffer: buf });
@@ -83,46 +84,37 @@ async function heicToJpegBlob(file: File): Promise<Blob> {
     canvas.width = decoded.width;
     canvas.height = decoded.height;
     const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Canvas 生成に失敗しました');
-
-    // 必ず新規 Uint8ClampedArray を作ってから ImageData に流し込む
-    const src = decoded.data;
-    const rgba =
-      src instanceof Uint8ClampedArray ? new Uint8ClampedArray(src) : new Uint8ClampedArray(src as ArrayBuffer);
-    const imgData = ctx.createImageData(decoded.width, decoded.height);
-    imgData.data.set(rgba);
-    ctx.putImageData(imgData, 0, 0);
-
-    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
-    if (!blob) throw new Error('libheif 変換失敗');
-    return blob;
-  } catch {
-    // 続行
-  }
+    if (ctx) {
+      const src = decoded.data;
+      const rgba =
+        src instanceof Uint8ClampedArray ? new Uint8ClampedArray(src) : new Uint8ClampedArray(src as ArrayBuffer);
+      const imgData = ctx.createImageData(decoded.width, decoded.height);
+      imgData.data.set(rgba);
+      ctx.putImageData(imgData, 0, 0);
+      const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
+      if (blob) return blob;
+    }
+  } catch {}
   // 2) heic2any
   try {
     const out = await heic2anyFn({ blob: file, toType: 'image/jpeg', quality: 0.9 });
     const blob = Array.isArray(out) ? out[0] : out;
     if (blob instanceof Blob) return blob;
-  } catch {
-    // 続行
-  }
+  } catch {}
   // 3) createImageBitmap フォールバック
   try {
     const buf = await file.arrayBuffer();
     return await arrayBufferToJpegBlob(buf);
-  } catch {
-    // 続行
-  }
-  throw new Error('[HEIC→JPEG 変換] 全変換処理が失敗しました');
+  } catch {}
+  // 4) 最後の砦：そのまま返す
+  return file;
 }
 
-/** JPEG 化＆圧縮（堅牢版：判定強化＋失敗時はオリジナルでフォールバック） */
+// JPEG 化＆圧縮（“絶対 throw しない”設計）
 async function toJpegAndCompress(file: File): Promise<{ blob: Blob; width: number; height: number }> {
-  // まず全バイトを読み込んで判定にも活用
   const buf = await file.arrayBuffer();
 
-  // 1) たぶん JPEG → 変換せず圧縮（失敗したらオリジナル）
+  // 1) JPEG ならそのまま or 圧縮（失敗しても元を返す）
   if (isLikelyJpeg(file, buf)) {
     try {
       const compressed = await imageCompression(new File([file], file.name || 'in.jpg', { type: 'image/jpeg' }), {
@@ -139,21 +131,18 @@ async function toJpegAndCompress(file: File): Promise<{ blob: Blob; width: numbe
     }
   }
 
-  // 2) HEIC/HEIF は専用変換
+  // 2) 非JPEG → JPEG 化（全部失敗しても元を返す）
   const ext = (file.name.split('.').pop() ?? '').toLowerCase();
   const isHeic = ext === 'heic' || ext === 'heif' || file.type === 'image/heic' || file.type === 'image/heif';
 
-  // 3) 非JPEG → JPEG 化（全部ダメならオリジナル）
   try {
-    const jpegBlob = isHeic ? await heicToJpegBlob(file) : await arrayBufferToJpegBlob(buf);
-
+    const jpegBlob = isHeic ? await heicToJpegBlob(file) : await arrayBufferToJpegBlob(buf, file.type || 'image/*');
     const compressed = await imageCompression(new File([jpegBlob], 'in.jpg', { type: 'image/jpeg' }), {
       maxSizeMB: 2,
       maxWidthOrHeight: 4000,
       initialQuality: 0.9,
       useWebWorker: true,
     });
-
     const { width, height } = await getImageSizeFromBlob(compressed);
     return { blob: compressed, width, height };
   } catch {
@@ -162,7 +151,7 @@ async function toJpegAndCompress(file: File): Promise<{ blob: Blob; width: numbe
   }
 }
 
-/** 1枚アップロード → photos / visit_photos 登録 */
+// 1枚アップロード（原則 throw しない。Supabase エラーのみ表に出る）
 export async function uploadVisitPhoto(file: File, visitId: string): Promise<UploadResult> {
   const { data: s } = await supabase.auth.getSession();
   const userId = s.session?.user.id;
@@ -197,12 +186,12 @@ export async function uploadVisitPhoto(file: File, visitId: string): Promise<Upl
   return { url, path, width, height };
 }
 
-/** 複数ファイルを“甘めに”：成功分だけ返す（編集画面互換のため alias あり） */
+// 複数：成功分だけ返す（既存互換の ok/ng も同梱）
 export type UploadManyResult = {
   uploaded: UploadResult[];
   skipped: { file: File; error: unknown }[];
-  ok: UploadResult[]; // 互換
-  ng: { file: File; error: unknown }[]; // 互換
+  ok: UploadResult[];
+  ng: { file: File; error: unknown }[];
 };
 
 export async function uploadVisitPhotosLenient(files: File[], visitId: string): Promise<UploadManyResult> {
@@ -220,5 +209,4 @@ export async function uploadVisitPhotosLenient(files: File[], visitId: string): 
   return { uploaded: ok, skipped: ng, ok, ng };
 }
 
-// 両対応（named / default）
 export default uploadVisitPhoto;

@@ -23,10 +23,10 @@ type RawVisitRow = {
   aquariums: { name: string } | { name: string }[] | null;
 };
 
-type ThumbRow = {
-  visit_id: string;
+type PhotoWithVisit = {
+  url: string | null;
   created_at: string;
-  photos: { url: string | null } | { url: string | null }[] | null;
+  visit_photos: { visit_id: string }[] | null;
 };
 
 const BADGE_STEPS = [3, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
@@ -47,19 +47,19 @@ export default function HistoryInner() {
           return;
         }
 
+        // 訪問一覧
         const { data, error } = await supabase
           .from('visits')
           .select('id,aquarium_id,visited_on,rating,note,aquariums(name)')
           .order('visited_on', { ascending: false });
         if (error) throw error;
 
-        // visits 正規化
         const normalized: VisitRow[] = (data ?? []).map((r: RawVisitRow) => {
           let aq: { name: string } | null = null;
           if (Array.isArray(r.aquariums)) {
             aq = r.aquariums[0] ? { name: String(r.aquariums[0].name ?? '') } : null;
           } else if (r.aquariums && typeof r.aquariums === 'object') {
-            aq = { name: String(r.aquariums.name ?? '') };
+            aq = { name: String((r.aquariums as any).name ?? '') };
           }
           return {
             id: String(r.id),
@@ -73,30 +73,29 @@ export default function HistoryInner() {
 
         setVisits(normalized);
 
-        // ▼ サムネ取得：inner join + 紐付け新しい順 + 写真も新しい順
+        // ▼ サムネ：photos 軸で join。新しい写真から順に各 visit に1枚だけ割り当てる
         const ids = normalized.map((v) => v.id);
         if (ids.length) {
-          const { data: rows, error: thumbErr } = await supabase
-            .from('visit_photos')
-            .select('visit_id, created_at, photos!inner(url, created_at)')
-            .in('visit_id', ids)
-            .order('created_at', { ascending: false }) // visit_photos 側
-            .order('created_at', { ascending: false, foreignTable: 'photos' }); // photos 側
+          const { data: ph, error: phErr } = await supabase
+            .from('photos')
+            .select('url, created_at, visit_photos(visit_id)')
+            .order('created_at', { ascending: false });
+          if (phErr) console.warn('[photos load error]', phErr);
 
-          if (thumbErr) {
-            console.warn('[thumbs load error]', thumbErr);
-          }
-
-          const firstUrl: Record<string, string> = {};
-          (rows as ThumbRow[] | null)?.forEach((row) => {
-            const vid = row.visit_id;
-            const p = row.photos;
-            const url = Array.isArray(p) ? p[0]?.url ?? undefined : p?.url ?? undefined;
-            if (vid && url && !firstUrl[vid]) {
-              firstUrl[vid] = url; // 最新の1枚を採用
+          const map: Record<string, string> = {};
+          (ph as PhotoWithVisit[] | null)?.some((row) => {
+            const vp = row.visit_photos ?? [];
+            // 1つの photo が複数 visit に紐づくことは通常ないが、配列に対応
+            for (const rel of vp) {
+              const vid = String(rel.visit_id);
+              if (ids.includes(vid) && row.url && !map[vid]) {
+                map[vid] = row.url;
+              }
             }
+            // 全 visit にサムネが行き渡ったら打ち切り
+            return Object.keys(map).length >= ids.length;
           });
-          setThumbs(firstUrl);
+          setThumbs(map);
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : '読み込みに失敗しました');
@@ -114,20 +113,13 @@ export default function HistoryInner() {
 
   const onDelete = async (visitId: string) => {
     if (!confirm('この記録を削除しますか？')) return;
-
     const { data: vp } = await supabase.from('visit_photos').select('photo_id').eq('visit_id', visitId);
     const photoIds = (vp as { photo_id: string }[] | null)?.map((x) => x.photo_id) ?? [];
-    if (photoIds.length) {
-      await supabase.from('photos').delete().in('id', photoIds);
-    }
+    if (photoIds.length) await supabase.from('photos').delete().in('id', photoIds);
     await supabase.from('visit_photos').delete().eq('visit_id', visitId);
-
     const { error } = await supabase.from('visits').delete().eq('id', visitId);
-    if (error) {
-      alert('削除に失敗しました：' + error.message);
-      return;
-    }
-    setVisits((prev) => prev.filter((v) => v.id !== visitId));
+    if (error) alert('削除に失敗しました：' + error.message);
+    else setVisits((prev) => prev.filter((v) => v.id !== visitId));
   };
 
   if (loading) return <main className="max-w-3xl mx-auto p-4">読み込み中…</main>;
