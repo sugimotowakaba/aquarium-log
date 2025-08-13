@@ -23,6 +23,12 @@ type RawVisitRow = {
   aquariums: { name: string } | { name: string }[] | null;
 };
 
+type ThumbRow = {
+  visit_id: string;
+  created_at: string;
+  photos: { url: string | null } | { url: string | null }[] | null;
+};
+
 const BADGE_STEPS = [3, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
 export default function HistoryInner() {
@@ -47,7 +53,7 @@ export default function HistoryInner() {
           .order('visited_on', { ascending: false });
         if (error) throw error;
 
-        // 正規化
+        // visits 正規化
         const normalized: VisitRow[] = (data ?? []).map((r: RawVisitRow) => {
           let aq: { name: string } | null = null;
           if (Array.isArray(r.aquariums)) {
@@ -67,26 +73,27 @@ export default function HistoryInner() {
 
         setVisits(normalized);
 
-        // ▼ サムネ取得：最新の紐付け順 + 写真側の created_at も降順
+        // ▼ サムネ取得：inner join + 紐付け新しい順 + 写真も新しい順
         const ids = normalized.map((v) => v.id);
         if (ids.length) {
           const { data: rows, error: thumbErr } = await supabase
             .from('visit_photos')
-            // inner にして「写真が無い行」を除外
             .select('visit_id, created_at, photos!inner(url, created_at)')
             .in('visit_id', ids)
-            .order('created_at', { ascending: false }) // visit_photos の新しい順
-            .order('created_at', { ascending: false, foreignTable: 'photos' }); // 写真自体も新しい順
+            .order('created_at', { ascending: false }) // visit_photos 側
+            .order('created_at', { ascending: false, foreignTable: 'photos' }); // photos 側
 
-          if (thumbErr) console.warn('[thumbs load error]', thumbErr);
+          if (thumbErr) {
+            console.warn('[thumbs load error]', thumbErr);
+          }
 
           const firstUrl: Record<string, string> = {};
-          (rows as any[] | null)?.forEach((row) => {
-            const vid: string | undefined = row?.visit_id;
-            const p = row?.photos; // オブジェクト or 配列 どちらでも来うる
-            const url: string | undefined = Array.isArray(p) ? p[0]?.url : p?.url;
+          (rows as ThumbRow[] | null)?.forEach((row) => {
+            const vid = row.visit_id;
+            const p = row.photos;
+            const url = Array.isArray(p) ? p[0]?.url ?? undefined : p?.url ?? undefined;
             if (vid && url && !firstUrl[vid]) {
-              firstUrl[vid] = url; // 最初に見つけた（＝最新）1枚を採用
+              firstUrl[vid] = url; // 最新の1枚を採用
             }
           });
           setThumbs(firstUrl);
@@ -107,18 +114,20 @@ export default function HistoryInner() {
 
   const onDelete = async (visitId: string) => {
     if (!confirm('この記録を削除しますか？')) return;
+
     const { data: vp } = await supabase.from('visit_photos').select('photo_id').eq('visit_id', visitId);
     const photoIds = (vp as { photo_id: string }[] | null)?.map((x) => x.photo_id) ?? [];
     if (photoIds.length) {
       await supabase.from('photos').delete().in('id', photoIds);
     }
     await supabase.from('visit_photos').delete().eq('visit_id', visitId);
+
     const { error } = await supabase.from('visits').delete().eq('id', visitId);
     if (error) {
       alert('削除に失敗しました：' + error.message);
-    } else {
-      setVisits((prev) => prev.filter((v) => v.id !== visitId));
+      return;
     }
+    setVisits((prev) => prev.filter((v) => v.id !== visitId));
   };
 
   if (loading) return <main className="max-w-3xl mx-auto p-4">読み込み中…</main>;
