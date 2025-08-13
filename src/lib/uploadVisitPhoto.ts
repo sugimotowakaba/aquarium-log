@@ -6,15 +6,14 @@ import heic2any from 'heic2any';
 
 export type UploadResult = { url: string; path: string; width?: number; height?: number };
 
-// ---- 型付け（heic ライブラリの any 撤廃）----
+// ---- heic ライブラリの最小型 ----
 type HeicDecodeResult = { width: number; height: number; data: Uint8ClampedArray | ArrayBufferLike };
 type HeicDecodeFn = (opts: { buffer: ArrayBuffer }) => Promise<HeicDecodeResult>;
 type Heic2AnyFn = (opts: { blob: Blob; toType?: string; quality?: number }) => Promise<Blob | Blob[]>;
 const heicDecodeFn = heicDecode as unknown as HeicDecodeFn;
 const heic2anyFn = heic2any as unknown as Heic2AnyFn;
-// ----------------------------------------------
+// ---------------------------------
 
-/** Blob を <img> 幅高にする */
 async function getImageSizeFromBlob(blob: Blob): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -24,7 +23,6 @@ async function getImageSizeFromBlob(blob: Blob): Promise<{ width: number; height
   });
 }
 
-/** ArrayBuffer → Blob(JPEG) を canvas で作る */
 async function arrayBufferToJpegBlob(buf: ArrayBuffer): Promise<Blob> {
   if (typeof createImageBitmap === 'function') {
     const bmp = await createImageBitmap(new Blob([buf]));
@@ -41,7 +39,6 @@ async function arrayBufferToJpegBlob(buf: ArrayBuffer): Promise<Blob> {
     if (!blob) throw new Error('JPEG 変換に失敗しました');
     return blob;
   }
-  // フォールバック：<img> 経由
   const blob = new Blob([buf]);
   const { width, height } = await getImageSizeFromBlob(blob);
   const canvas = document.createElement('canvas');
@@ -75,13 +72,16 @@ async function heicToJpegBlob(file: File): Promise<Blob> {
     canvas.height = decoded.height;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 生成に失敗しました');
-    // ★ ここを安全にナローイング
-    const rgba =
+
+    // ★ ここを厳密に：ArrayBufferLike→ArrayBuffer に寄せ、明示型を付与
+    const rgba: Uint8ClampedArray =
       decoded.data instanceof Uint8ClampedArray
         ? decoded.data
-        : new Uint8ClampedArray(decoded.data as ArrayBufferLike);
+        : new Uint8ClampedArray(decoded.data as ArrayBuffer);
+
     const imageData = new ImageData(rgba, decoded.width, decoded.height);
     ctx.putImageData(imageData, 0, 0);
+
     const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
     if (!blob) throw new Error('libheif 変換失敗');
     return blob;
