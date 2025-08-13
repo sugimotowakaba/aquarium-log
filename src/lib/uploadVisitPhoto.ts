@@ -1,11 +1,10 @@
 // src/lib/uploadVisitPhoto.ts
 import { supabase } from '@/lib/supabaseClient';
 import imageCompression from 'browser-image-compression';
-// これらは dev 依存で型が無いことがあるので any 許容
-// 型エラーが出る場合は @types が無いので d.ts を用意するか、tsconfig の skipLibCheck を true にしてください
-// @ts-expect-error no types
+// 型定義が無いパッケージのため、コンパイラには存在しない型エラーが出ます。
+// @ts-expect-error: no official types for heic-decode
 import heicDecode from 'heic-decode';
-// @ts-expect-error no types
+// @ts-expect-error: no official types for heic2any
 import heic2any from 'heic2any';
 
 export type UploadResult = { url: string; path: string; width?: number; height?: number };
@@ -30,7 +29,8 @@ async function arrayBufferToJpegBlob(buf: ArrayBuffer): Promise<Blob> {
     canvas.height = bmp.height;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 生成に失敗しました');
-    // @ts-ignore
+    // DOM lib の型が広すぎるため drawImage の互換警告が出る環境がある
+    // @ts-expect-error: drawImage accepts ImageBitmap at runtime
     ctx.drawImage(bmp, 0, 0);
     const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
     if (!blob) throw new Error('JPEG 変換に失敗しました');
@@ -51,7 +51,7 @@ async function arrayBufferToJpegBlob(buf: ArrayBuffer): Promise<Blob> {
     img.onerror = reject;
     img.src = url;
   });
-  // @ts-ignore
+  // @ts-expect-error: drawImage accepts HTMLImageElement at runtime
   ctx.drawImage(img, 0, 0);
   const out = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
   if (!out) throw new Error('JPEG 変換に失敗しました');
@@ -80,7 +80,6 @@ async function heicToJpegBlob(file: File): Promise<Blob> {
   // 2) heic2any
   try {
     const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 });
-    // heic2any は Blob or Blob[] を返す
     const blob = Array.isArray(out) ? out[0] : out;
     if (blob instanceof Blob) return blob;
   } catch {
@@ -100,9 +99,7 @@ async function heicToJpegBlob(file: File): Promise<Blob> {
 async function toJpegAndCompress(file: File): Promise<{ blob: Blob; width: number; height: number }> {
   const ext = (file.name.split('.').pop() ?? '').toLowerCase();
   let jpegBlob: Blob;
-  if (ext === 'heic' || ext === 'heif') {
-    jpegBlob = await heicToJpegBlob(file);
-  } else if (file.type === 'image/heic' || file.type === 'image/heif') {
+  if (ext === 'heic' || ext === 'heif' || file.type === 'image/heic' || file.type === 'image/heif') {
     jpegBlob = await heicToJpegBlob(file);
   } else if (file.type === 'image/jpeg' || ext === 'jpg' || ext === 'jpeg') {
     jpegBlob = file;
@@ -130,7 +127,6 @@ export async function uploadVisitPhoto(file: File, visitId: string): Promise<Upl
   const userId = s.session?.user.id;
   if (!userId) throw new Error('ログインが必要です');
 
-  // 画像を JPEG+圧縮に
   const { blob, width, height } = await toJpegAndCompress(file);
 
   const filename = `${Date.now()}.jpg`;
