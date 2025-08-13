@@ -27,7 +27,6 @@ const PREFS = [
   '沖縄県',
 ];
 
-export const metadata = { title: '水族館一覧' };
 export const dynamic = 'force-dynamic';
 
 export default function AquariumsPage() {
