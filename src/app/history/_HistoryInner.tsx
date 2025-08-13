@@ -42,9 +42,27 @@ export default function HistoryInner() {
           .order('visited_on', { ascending: false });
         if (error) throw error;
 
-        setVisits((data ?? []) as VisitRow[]);
+        // 取得結果を VisitRow に正規化（aquariums が配列でも単体でも対応）
+        const normalized: VisitRow[] = (data ?? []).map((r: any) => {
+          let aq: { name: string } | null = null;
+          if (Array.isArray(r.aquariums)) {
+            aq = r.aquariums[0] ? { name: String(r.aquariums[0]?.name ?? '') } : null;
+          } else if (r.aquariums && typeof r.aquariums === 'object') {
+            aq = { name: String(r.aquariums.name ?? '') };
+          }
+          return {
+            id: String(r.id),
+            aquarium_id: String(r.aquarium_id),
+            visited_on: String(r.visited_on),
+            rating: Number(r.rating ?? 0),
+            note: r.note ?? null,
+            aquariums: aq,
+          };
+        });
 
-        const ids = (data ?? []).map((v) => v.id);
+        setVisits(normalized);
+
+        const ids = normalized.map((v) => v.id);
         if (ids.length) {
           const { data: rows } = await supabase
             .from('visit_photos')
@@ -145,6 +163,7 @@ export default function HistoryInner() {
               <li key={v.id} className="rounded-lg border p-3">
                 <div className="flex gap-3">
                   {photoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={photoUrl}
                       alt="サムネイル"

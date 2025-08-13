@@ -1,7 +1,6 @@
 // src/lib/uploadVisitPhoto.ts
 import { supabase } from '@/lib/supabaseClient';
 import imageCompression from 'browser-image-compression';
-// 型定義が無いパッケージのため、コンパイラには存在しない型エラーが出ます。
 // @ts-expect-error: no official types for heic-decode
 import heicDecode from 'heic-decode';
 // @ts-expect-error: no official types for heic2any
@@ -21,7 +20,6 @@ async function getImageSizeFromBlob(blob: Blob): Promise<{ width: number; height
 
 /** ArrayBuffer → Blob(JPEG) を canvas で作る */
 async function arrayBufferToJpegBlob(buf: ArrayBuffer): Promise<Blob> {
-  // createImageBitmap が使えるなら高品質
   if (typeof createImageBitmap === 'function') {
     const bmp = await createImageBitmap(new Blob([buf]));
     const canvas = document.createElement('canvas');
@@ -29,7 +27,6 @@ async function arrayBufferToJpegBlob(buf: ArrayBuffer): Promise<Blob> {
     canvas.height = bmp.height;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 生成に失敗しました');
-    // DOM lib の型が広すぎるため drawImage の互換警告が出る環境がある
     // @ts-expect-error: drawImage accepts ImageBitmap at runtime
     ctx.drawImage(bmp, 0, 0);
     const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
@@ -58,7 +55,7 @@ async function arrayBufferToJpegBlob(buf: ArrayBuffer): Promise<Blob> {
   return out;
 }
 
-/** HEIC/HEIF を JPEG Blob に変換（多段フォールバック） */
+/** HEIC/HEIF → JPEG Blob（多段フォールバック） */
 async function heicToJpegBlob(file: File): Promise<Blob> {
   // 1) libheif-js (heic-decode)
   try {
@@ -85,7 +82,7 @@ async function heicToJpegBlob(file: File): Promise<Blob> {
   } catch {
     // 続行
   }
-  // 3) createImageBitmap で読み込み→JPEG
+  // 3) createImageBitmap
   try {
     const buf = await file.arrayBuffer();
     return await arrayBufferToJpegBlob(buf);
@@ -95,7 +92,7 @@ async function heicToJpegBlob(file: File): Promise<Blob> {
   throw new Error('[HEIC→JPEG 変換] 全変換処理が失敗しました');
 }
 
-/** 画像を 2MB 目安で圧縮して JPEG Blob を作る */
+/** JPEG 化＆圧縮（目安 2MB） */
 async function toJpegAndCompress(file: File): Promise<{ blob: Blob; width: number; height: number }> {
   const ext = (file.name.split('.').pop() ?? '').toLowerCase();
   let jpegBlob: Blob;
@@ -104,12 +101,10 @@ async function toJpegAndCompress(file: File): Promise<{ blob: Blob; width: numbe
   } else if (file.type === 'image/jpeg' || ext === 'jpg' || ext === 'jpeg') {
     jpegBlob = file;
   } else {
-    // PNG などは JPEG に寄せる
     const buf = await file.arrayBuffer();
     jpegBlob = await arrayBufferToJpegBlob(buf);
   }
 
-  // 圧縮（目安 2MB）
   const compressed = await imageCompression(new File([jpegBlob], 'in.jpg', { type: 'image/jpeg' }), {
     maxSizeMB: 2,
     maxWidthOrHeight: 4000,
@@ -121,7 +116,7 @@ async function toJpegAndCompress(file: File): Promise<{ blob: Blob; width: numbe
   return { blob: compressed, width, height };
 }
 
-/** Supabase Storage へアップロードし、DB(photos, visit_photos)へ関連付け */
+/** 1枚アップロード → photos / visit_photos 登録 */
 export async function uploadVisitPhoto(file: File, visitId: string): Promise<UploadResult> {
   const { data: s } = await supabase.auth.getSession();
   const userId = s.session?.user.id;
@@ -132,19 +127,16 @@ export async function uploadVisitPhoto(file: File, visitId: string): Promise<Upl
   const filename = `${Date.now()}.jpg`;
   const path = `${userId}/${visitId}/${filename}`;
 
-  // Storage へ保存
   const { error: upErr } = await supabase.storage.from('photos').upload(path, blob, {
     contentType: 'image/jpeg',
     upsert: false,
   });
   if (upErr) throw upErr;
 
-  // 公開URL 取得
   const { data: pub } = supabase.storage.from('photos').getPublicUrl(path);
   const url = pub?.publicUrl;
   if (!url) throw new Error('公開URLの取得に失敗しました');
 
-  // photos にレコードを作成 → id を取得
   const { data: pIns, error: pErr } = await supabase
     .from('photos')
     .insert({ path, url, width, height })
@@ -153,11 +145,26 @@ export async function uploadVisitPhoto(file: File, visitId: string): Promise<Upl
   if (pErr) throw pErr;
   const photoId = pIns!.id as string;
 
-  // visit_photos に紐づけ
   const { error: vpErr } = await supabase.from('visit_photos').insert({ visit_id: visitId, photo_id: photoId });
   if (vpErr) throw vpErr;
 
   return { url, path, width, height };
+}
+
+/** 複数ファイルを“甘めに”：成功分だけ返す（編集画面用） */
+export async function uploadVisitPhotosLenient(files: File[], visitId: string) {
+  const ok: UploadResult[] = [];
+  const ng: { file: File; error: unknown }[] = [];
+  for (const f of files) {
+    try {
+      const res = await uploadVisitPhoto(f, visitId);
+      ok.push(res);
+    } catch (e) {
+      console.warn('[uploadVisitPhotosLenient] failed:', e);
+      ng.push({ file: f, error: e });
+    }
+  }
+  return { ok, ng };
 }
 
 // 両対応（named / default）
