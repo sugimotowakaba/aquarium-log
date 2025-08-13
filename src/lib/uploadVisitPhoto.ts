@@ -73,12 +73,17 @@ async function heicToJpegBlob(file: File): Promise<Blob> {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 生成に失敗しました');
 
-    // ★ ここを厳密に：ArrayBufferLike→ArrayBuffer に寄せ、明示型を付与
-    const rgba: Uint8ClampedArray =
-      decoded.data instanceof Uint8ClampedArray
-        ? decoded.data
-        : new Uint8ClampedArray(decoded.data as ArrayBuffer);
+    // ★ ここを厳密に：必ず Uint8ClampedArray インスタンスを新規生成してから ImageData へ
+    const src = decoded.data;
+    let rgba: Uint8ClampedArray;
+    if (src instanceof Uint8ClampedArray) {
+      // コピーを作る（背後の ArrayBuffer の型差異を吸収）
+        rgba = new Uint8ClampedArray(src);
 
+    } else {
+      // ArrayBufferLike → ArrayBuffer に明示的に寄せてから生成
+      rgba = new Uint8ClampedArray(src as ArrayBuffer);
+    }
     const imageData = new ImageData(rgba, decoded.width, decoded.height);
     ctx.putImageData(imageData, 0, 0);
 
