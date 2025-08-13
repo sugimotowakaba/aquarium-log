@@ -74,17 +74,22 @@ export default function HistoryInner() {
 
         const ids = normalized.map((v) => v.id);
         if (ids.length) {
-          const { data: rows } = await supabase
+          const { data: rows, error: thumbErr } = await supabase
             .from('visit_photos')
             .select('visit_id, photos(url, created_at)')
             .in('visit_id', ids)
-            .order('created_at', { ascending: false });
+            .order('created_at', { ascending: false, foreignTable: 'photos' });
 
+          if (thumbErr) {
+            console.warn('[thumbs load error]', thumbErr);
+          }
           const firstUrl: Record<string, string> = {};
-          (rows as VisitPhotoJoin[] | null)?.forEach((row) => {
-            const url = row?.photos?.url;
+          (rows as { visit_id: string; photos: { url: string | null } | null }[] | null)?.forEach((row) => {
             const vid = row?.visit_id;
-            if (vid && url && !firstUrl[vid]) firstUrl[vid] = url;
+            const url = row?.photos?.url || undefined;
+            if (vid && url && !firstUrl[vid]) {
+                firstUrl[vid] = url;
+            }
           });
           setThumbs(firstUrl);
         }
