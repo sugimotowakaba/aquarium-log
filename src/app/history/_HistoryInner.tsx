@@ -54,12 +54,13 @@ export default function HistoryInner() {
           .order('visited_on', { ascending: false });
         if (error) throw error;
 
+        // 正規化（any不使用）
         const normalized: VisitRow[] = (data ?? []).map((r: RawVisitRow) => {
           let aq: { name: string } | null = null;
           if (Array.isArray(r.aquariums)) {
             aq = r.aquariums[0] ? { name: String(r.aquariums[0].name ?? '') } : null;
-          } else if (r.aquariums && typeof r.aquariums === 'object') {
-            aq = { name: String((r.aquariums as any).name ?? '') };
+          } else if (r.aquariums && typeof r.aquariums === 'object' && 'name' in r.aquariums) {
+            aq = { name: String(r.aquariums.name ?? '') };
           }
           return {
             id: String(r.id),
@@ -84,9 +85,8 @@ export default function HistoryInner() {
 
           const map: Record<string, string> = {};
           (ph as PhotoWithVisit[] | null)?.some((row) => {
-            const vp = row.visit_photos ?? [];
-            // 1つの photo が複数 visit に紐づくことは通常ないが、配列に対応
-            for (const rel of vp) {
+            const rels = row.visit_photos ?? [];
+            for (const rel of rels) {
               const vid = String(rel.visit_id);
               if (ids.includes(vid) && row.url && !map[vid]) {
                 map[vid] = row.url;
