@@ -13,6 +13,16 @@ type VisitRow = {
   aquariums: { name: string } | null;
 };
 
+type RawVisitRow = {
+  id: string | number;
+  aquarium_id: string | number;
+  visited_on: string;
+  rating: number | null;
+  note: string | null;
+  // Supabase のリレーション設定によって単体 or 配列で返る可能性がある
+  aquariums: { name: string } | { name: string }[] | null;
+};
+
 type VisitPhotoJoin = {
   visit_id: string;
   photos: { url: string; created_at: string } | null;
@@ -42,11 +52,11 @@ export default function HistoryInner() {
           .order('visited_on', { ascending: false });
         if (error) throw error;
 
-        // 取得結果を VisitRow に正規化（aquariums が配列でも単体でも対応）
-        const normalized: VisitRow[] = (data ?? []).map((r: any) => {
+        // 取得結果を VisitRow に正規化
+        const normalized: VisitRow[] = (data ?? []).map((r: RawVisitRow) => {
           let aq: { name: string } | null = null;
           if (Array.isArray(r.aquariums)) {
-            aq = r.aquariums[0] ? { name: String(r.aquariums[0]?.name ?? '') } : null;
+            aq = r.aquariums[0] ? { name: String(r.aquariums[0].name ?? '') } : null;
           } else if (r.aquariums && typeof r.aquariums === 'object') {
             aq = { name: String(r.aquariums.name ?? '') };
           }
@@ -74,9 +84,7 @@ export default function HistoryInner() {
           (rows as VisitPhotoJoin[] | null)?.forEach((row) => {
             const url = row?.photos?.url;
             const vid = row?.visit_id;
-            if (vid && url && !firstUrl[vid]) {
-              firstUrl[vid] = url;
-            }
+            if (vid && url && !firstUrl[vid]) firstUrl[vid] = url;
           });
           setThumbs(firstUrl);
         }
